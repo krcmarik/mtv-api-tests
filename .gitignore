@@ -156,6 +156,7 @@ jira.cfg
 
 # Local develop
 .dev/
+.rh-mtv-tools/
 
 # AI
 .cursor/
