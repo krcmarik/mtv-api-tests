@@ -951,6 +951,9 @@ class VMWareProvider(BaseProvider):
             new_disk_spec.device.backing = backing_info
             device_changes.append(new_disk_spec)
             available_unit_number += 1
+            # Skip unit 7 (reserved for SCSI controller)
+            if available_unit_number == 7:
+                available_unit_number += 1
             new_disk_key_counter -= 1
         LOGGER.info(f"Configured {len(disks_to_add)} new disks for cloning")
         return device_changes
@@ -1075,15 +1078,77 @@ class VMWareProvider(BaseProvider):
             config_spec.deviceChange = device_changes
             LOGGER.info(f"Applied {len(device_changes)} device changes to the clone specification.")
 
-        # Enable Change Block Tracking (CBT) for warm migration support
-        cbt_option = vim.option.OptionValue()
-        cbt_option.key = "ctkEnabled"
-        cbt_option.value = "true"
-        if config_spec.extraConfig:
-            config_spec.extraConfig.append(cbt_option)
+        # Enable Change Block Tracking (CBT) only for warm migrations
+        enable_ctk = kwargs.get("enable_ctk", False)
+        if enable_ctk:
+            LOGGER.info("Enabling Change Block Tracking (CBT) for warm migration")
+            cbt_option = vim.option.OptionValue()
+            cbt_option.key = "ctkEnabled"
+            cbt_option.value = "true"
+
+            # Enable CTK on all disks (required for warm migration
+            extra_config_options = [cbt_option]
+            source_config = source_vm.config
+            if source_config and source_config.hardware and source_config.hardware.device:
+                for device in source_config.hardware.device:
+                    if isinstance(device, vim.vm.device.VirtualDisk):
+                        controller_key = device.controllerKey
+                        unit_number = device.unitNumber
+                        # Find the controller to get the bus number
+                        for controller in source_config.hardware.device:
+                            if hasattr(controller, "key") and controller.key == controller_key:
+                                if isinstance(controller, vim.vm.device.VirtualSCSIController):
+                                    bus_number = controller.busNumber
+                                    disk_cbt_option = vim.option.OptionValue()
+                                    disk_cbt_option.key = f"scsi{bus_number}:{unit_number}.ctkEnabled"
+                                    disk_cbt_option.value = "true"
+                                    extra_config_options.append(disk_cbt_option)
+                                    LOGGER.info("Enabling CTK for disk scsi%s:%s", bus_number, unit_number)
+                                break
+
+            # Mirror the unit allocation logic from _get_add_disk_device_specs
+            scsi_controller = None
+            if source_config and source_config.hardware and source_config.hardware.device:
+                scsi_controller = next(
+                    (
+                        device
+                        for device in source_config.hardware.device
+                        if isinstance(device, vim.vm.device.VirtualSCSIController)
+                    ),
+                    None,
+                )
+            if scsi_controller and regular_disks:
+                used_unit_numbers = {
+                    device.unitNumber
+                    for device in source_config.hardware.device
+                    if device.controllerKey == scsi_controller.key
+                }
+                available_unit = next((i for i in range(16) if i != 7 and i not in used_unit_numbers), None)
+                bus_number = scsi_controller.busNumber
+                current_unit = available_unit
+                for _ in regular_disks:
+                    if current_unit is not None:
+                        disk_cbt_option = vim.option.OptionValue()
+                        disk_cbt_option.key = f"scsi{bus_number}:{current_unit}.ctkEnabled"
+                        disk_cbt_option.value = "true"
+                        extra_config_options.append(disk_cbt_option)
+                        LOGGER.info("Enabling CTK for new disk scsi%s:%s", bus_number, current_unit)
+                        current_unit += 1
+                        # Skip unit 7 (reserved for SCSI controller)
+                        if current_unit == 7:
+                            current_unit += 1
+
+            if config_spec.extraConfig:
+                config_spec.extraConfig.extend(extra_config_options)
+            else:
+                config_spec.extraConfig = extra_config_options
+            LOGGER.info(
+                "Enabled Change Block Tracking (CBT) on cloned VM '%s' and %s disk(s)",
+                clone_vm_name,
+                len(extra_config_options) - 1,
+            )
         else:
-            config_spec.extraConfig = [cbt_option]
-        LOGGER.info("Enabling Change Block Tracking (CBT) on cloned VM '%s'", clone_vm_name)
+            LOGGER.debug("Skipping CTK configuration (not needed for cold migration)")
 
         clone_spec = vim.vm.CloneSpec(
             location=relocate_spec,
