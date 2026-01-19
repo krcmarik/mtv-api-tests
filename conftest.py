@@ -374,6 +374,12 @@ def session_uuid(fixture_store):
 
 
 @pytest.fixture(scope="session")
+def skip_teardown(request):
+    """Get --skip-teardown flag value."""
+    return request.config.getoption("--skip-teardown")
+
+
+@pytest.fixture(scope="session")
 def mtv_namespace():
     return py_config["mtv_namespace"]
 

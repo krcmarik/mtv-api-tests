@@ -34,13 +34,14 @@ def test_sanity_cold_mtv_migration(
     source_provider_inventory,
     source_vms_namespace,
     vm_ssh_connections,
+    skip_teardown,
 ):
     if source_provider.type == Provider.ProviderType.OVA:
         plan["virtual_machines"] = [
             {"name": "1nisim-rhel9-efi"},
         ]
 
-    storage_migration_map, network_migration_map = create_storagemap_and_networkmap(
+    with create_storagemap_and_networkmap(
         fixture_store=fixture_store,
         source_provider=source_provider,
         destination_provider=destination_provider,
@@ -49,23 +50,24 @@ def test_sanity_cold_mtv_migration(
         multus_network_name=multus_network_name,
         target_namespace=target_namespace,
         plan=plan,
-    )
-
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-        vm_ssh_connections=vm_ssh_connections,
-    )
+        skip_teardown=skip_teardown,
+    ) as (storage_migration_map, network_migration_map):
+        migrate_vms(
+            ocp_admin_client=ocp_admin_client,
+            request=request,
+            fixture_store=fixture_store,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            plan=plan,
+            network_migration_map=network_migration_map,
+            storage_migration_map=storage_migration_map,
+            source_provider_data=source_provider_data,
+            target_namespace=target_namespace,
+            source_vms_namespace=source_vms_namespace,
+            source_provider_inventory=source_provider_inventory,
+            vm_ssh_connections=vm_ssh_connections,
+            skip_teardown=skip_teardown,
+        )
 
 
 @pytest.mark.remote
@@ -93,8 +95,9 @@ def test_cold_remote_ocp(
     multus_network_name,
     source_vms_namespace,
     vm_ssh_connections,
+    skip_teardown,
 ):
-    storage_migration_map, network_migration_map = create_storagemap_and_networkmap(
+    with create_storagemap_and_networkmap(
         fixture_store=fixture_store,
         source_provider=source_provider,
         destination_provider=destination_ocp_provider,
@@ -103,20 +106,21 @@ def test_cold_remote_ocp(
         multus_network_name=multus_network_name,
         target_namespace=target_namespace,
         plan=plan,
-    )
-
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_ocp_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-        vm_ssh_connections=vm_ssh_connections,
-    )
+        skip_teardown=skip_teardown,
+    ) as (storage_migration_map, network_migration_map):
+        migrate_vms(
+            ocp_admin_client=ocp_admin_client,
+            request=request,
+            fixture_store=fixture_store,
+            source_provider=source_provider,
+            destination_provider=destination_ocp_provider,
+            plan=plan,
+            network_migration_map=network_migration_map,
+            storage_migration_map=storage_migration_map,
+            source_provider_data=source_provider_data,
+            target_namespace=target_namespace,
+            source_vms_namespace=source_vms_namespace,
+            source_provider_inventory=source_provider_inventory,
+            vm_ssh_connections=vm_ssh_connections,
+            skip_teardown=skip_teardown,
+        )

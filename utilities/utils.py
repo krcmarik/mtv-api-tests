@@ -6,7 +6,7 @@ from collections.abc import Generator
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from subprocess import STDOUT, check_output
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from kubernetes.dynamic import DynamicClient
@@ -251,14 +251,16 @@ def create_source_provider(
 
     if not source_provider_secret:  # OCP provider use the local OCP secret
         # Creating the source Secret and source Provider CRs
-        source_provider_secret = create_and_store_resource(
+        with create_and_store_resource(
             fixture_store=fixture_store,
             resource=Secret,
             client=admin_client,
             namespace=namespace,
             string_data=secret_string_data,
             label=metadata_labels,
-        )
+            skip_teardown=True,  # Keep secret alive for provider
+        ) as _secret:
+            source_provider_secret = cast(Secret, _secret)
 
     if not source_provider_secret:
         raise ValueError("Failed to create source provider secret")
@@ -268,7 +270,7 @@ def create_source_provider(
     if vmware_provider(provider_data=source_provider_data_copy) and has_copyoffload:
         provider_annotations["forklift.konveyor.io/empty-vddk-init-image"] = "yes"
 
-    ocp_resource_provider = create_and_store_resource(
+    with create_and_store_resource(
         fixture_store=fixture_store,
         resource=Provider,
         client=admin_client,
@@ -279,15 +281,17 @@ def create_source_provider(
         provider_type=source_provider_data_copy["type"],
         vddk_init_image=source_provider_data_copy.get("vddk_init_image"),
         annotations=provider_annotations or None,
-    )
-    ocp_resource_provider.wait_for_status(Provider.Status.READY, timeout=600, stop_status="ConnectionFailed")
+        skip_teardown=True,  # Keep provider alive for the session
+    ) as _provider:
+        ocp_resource_provider = _provider
+        ocp_resource_provider.wait_for_status(Provider.Status.READY, timeout=600, stop_status="ConnectionFailed")
 
-    # this is for communication with the provider
-    with source_provider(ocp_resource=ocp_resource_provider, **provider_args) as _source_provider:
-        if not _source_provider.test:
-            pytest.fail(f"{source_provider.type} provider {provider_args['host']} is not available.")
+        # this is for communication with the provider
+        with source_provider(ocp_resource=ocp_resource_provider, **provider_args) as _source_provider:
+            if not _source_provider.test:
+                pytest.fail(f"{source_provider.type} provider {provider_args['host']} is not available.")
 
-        yield _source_provider
+            yield _source_provider
 
 
 def create_source_cnv_vms(
@@ -301,27 +305,27 @@ def create_source_cnv_vms(
     vms_to_create: list[VirtualMachine] = []
 
     for vm_dict in vms:
-        vms_to_create.append(
-            create_and_store_resource(
-                resource=VirtualMachineFromInstanceType,
-                fixture_store=fixture_store,
-                name=f"{vm_dict['name']}{vm_name_suffix}",
-                namespace=namespace,
-                client=client,
-                instancetype_name="u1.small",
-                preference_name="rhel.9",
-                datasource_name="rhel9",
-                storage_size="30Gi",
-                additional_networks=[network_name],
-                cloud_init_user_data="""#cloud-config
+        with create_and_store_resource(
+            resource=VirtualMachineFromInstanceType,
+            fixture_store=fixture_store,
+            name=f"{vm_dict['name']}{vm_name_suffix}",
+            namespace=namespace,
+            client=client,
+            instancetype_name="u1.small",
+            preference_name="rhel.9",
+            datasource_name="rhel9",
+            storage_size="30Gi",
+            additional_networks=[network_name],
+            cloud_init_user_data="""#cloud-config
 chpasswd:
 expire: false
 password: 123456
 user: rhel
 """,
-                run_strategy=VirtualMachine.RunStrategy.MANUAL,
-            ),
-        )
+            run_strategy=VirtualMachine.RunStrategy.MANUAL,
+            skip_teardown=True,  # VMs will be cleaned up by fixture teardown
+        ) as _vm:
+            vms_to_create.append(cast(VirtualMachine, _vm))
 
     for vm in vms_to_create:
         if not vm.ready:
