@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
@@ -20,7 +22,7 @@ from libs.forklift_inventory import ForkliftInventory
 from libs.providers.openshift import OCPProvider
 from report import create_migration_scale_report
 from utilities.copyoffload_migration import wait_for_plan_secret
-from utilities.migration_utils import prepare_migration_for_tests
+from utilities.migration_utils import archive_plan, prepare_migration_for_tests
 from utilities.post_migration import check_vms
 from utilities.resources import create_and_store_resource
 from utilities.ssh_utils import SSHConnectionManager, VMSSHConnection
@@ -76,28 +78,29 @@ def migrate_vms(
         source_vms_namespace=source_vms_namespace,
     )
 
-    migration_plan = run_migration(**run_migration_kwargs)
+    with run_migration(**run_migration_kwargs) as migration_plan:
+        wait_for_migration_complate(plan=migration_plan)
 
-    wait_for_migration_complate(plan=migration_plan)
+        if py_config.get("create_scale_report"):
+            create_migration_scale_report(plan_resource=migration_plan)
 
-    if py_config.get("create_scale_report"):
-        create_migration_scale_report(plan_resource=plan)
-
-    if get_value_from_py_config("check_vms_signals") and plan.get("check_vms_signals", True):
-        check_vms(
-            plan=plan,
-            source_provider=source_provider,
-            source_provider_data=source_provider_data,
-            destination_provider=destination_provider,
-            destination_namespace=target_namespace,
-            network_map_resource=network_migration_map,
-            storage_map_resource=storage_migration_map,
-            source_vms_namespace=source_vms_namespace,
-            source_provider_inventory=source_provider_inventory,
-            vm_ssh_connections=vm_ssh_connections,
-        )
+        if get_value_from_py_config("check_vms_signals") and plan.get("check_vms_signals", True):
+            check_vms(
+                plan=plan,
+                source_provider=source_provider,
+                source_provider_data=source_provider_data,
+                destination_provider=destination_provider,
+                destination_namespace=target_namespace,
+                network_map_resource=network_migration_map,
+                storage_map_resource=storage_migration_map,
+                source_vms_namespace=source_vms_namespace,
+                source_provider_inventory=source_provider_inventory,
+                vm_ssh_connections=vm_ssh_connections,
+            )
+    # Plan and Migration cleaned up here after all operations complete
 
 
+@contextmanager
 def run_migration(
     ocp_admin_client: DynamicClient,
     source_provider_name: str,
@@ -122,7 +125,7 @@ def run_migration(
     preserve_static_ips: bool = False,
     pvc_name_template: str | None = None,
     pvc_name_template_use_generate_name: bool | None = None,
-) -> Plan:
+) -> Iterator[Plan]:
     """
     Creates and Runs a Migration ToolKit for Virtualization (MTV) Migration Plan.
 
@@ -184,36 +187,47 @@ def run_migration(
         # Note: generateName is enabled by default, so Kubernetes adds random suffix automatically
         plan_kwargs["pvc_name_template"] = "pvc"
 
-    plan = create_and_store_resource(**plan_kwargs)
+    with create_and_store_resource(**plan_kwargs) as plan:
+        try:
+            plan.wait_for_condition(condition=Plan.Condition.READY, status=Plan.Condition.Status.TRUE, timeout=360)
+        except TimeoutExpiredError:
+            LOGGER.error(f"Plan {plan.name} failed to reach status {Plan.Condition.Status.TRUE}\n\t{plan.instance}")
+            source_provider = Provider(
+                client=ocp_admin_client, name=source_provider_name, namespace=source_provider_namespace
+            )
+            dest_provider = Provider(
+                client=ocp_admin_client, name=destination_provider_name, namespace=destination_provider_namespace
+            )
+            LOGGER.error(f"Source provider: {source_provider.instance}")
+            LOGGER.error(f"Destinaion provider: {dest_provider.instance}")
+            raise
 
-    try:
-        plan.wait_for_condition(condition=Plan.Condition.READY, status=Plan.Condition.Status.TRUE, timeout=360)
-    except TimeoutExpiredError:
-        LOGGER.error(f"Plan {plan.name} failed to reach status {Plan.Condition.Status.TRUE}\n\t{plan.instance}")
-        source_provider = Provider(
-            client=ocp_admin_client, name=source_provider_name, namespace=source_provider_namespace
-        )
-        dest_provider = Provider(
-            client=ocp_admin_client, name=destination_provider_name, namespace=destination_provider_namespace
-        )
-        LOGGER.error(f"Source provider: {source_provider.instance}")
-        LOGGER.error(f"Destinaion provider: {dest_provider.instance}")
-        raise
+        # Wait for Forklift to create plan-specific secret for copy-offload (race condition)
+        if copyoffload:
+            assert plan.name is not None, "Plan name should not be None after deployment"
+            wait_for_plan_secret(ocp_admin_client, target_namespace, plan.name)
 
-    # Wait for Forklift to create plan-specific secret for copy-offload (race condition)
-    if copyoffload:
-        wait_for_plan_secret(ocp_admin_client, target_namespace, plan.name)
-
-    create_and_store_resource(
-        client=ocp_admin_client,
-        fixture_store=fixture_store,
-        resource=Migration,
-        namespace=target_namespace,
-        plan_name=plan.name,
-        plan_namespace=plan.namespace,
-        cut_over=cut_over,
-    )
-    return plan
+        with create_and_store_resource(
+            client=ocp_admin_client,
+            fixture_store=fixture_store,
+            resource=Migration,
+            namespace=target_namespace,
+            plan_name=plan.name,
+            plan_namespace=plan.namespace,
+            cut_over=cut_over,
+        ) as _migration:
+            # Keep Migration alive during migration execution
+            try:
+                yield plan
+            finally:
+                # Archive Plan BEFORE it's deleted
+                skip_teardown = fixture_store.get("skip_teardown", False)
+                if not skip_teardown:
+                    try:
+                        archive_plan(plan)
+                        LOGGER.info("Successfully archived Plan %s", plan.name)
+                    except Exception as archive_exc:
+                        LOGGER.error("Failed to archive Plan %s: %s", plan.name, archive_exc)
 
 
 def get_vm_suffix(warm_migration: bool) -> str:
@@ -266,6 +280,7 @@ def wait_for_migration_complate(plan: Plan) -> None:
         )
 
 
+@contextmanager
 def get_storage_migration_map(
     fixture_store: dict[str, Any],
     target_namespace: str,
@@ -281,7 +296,7 @@ def get_storage_migration_map(
     offload_plugin_config: dict[str, Any] | None = None,
     access_mode: str | None = None,
     volume_mode: str | None = None,
-) -> StorageMap:
+) -> Iterator[StorageMap]:
     """
     Create a storage map for VM migration.
 
@@ -368,7 +383,7 @@ def get_storage_migration_map(
                 "source": storage,
             })
 
-    storage_map = create_and_store_resource(
+    with create_and_store_resource(
         fixture_store=fixture_store,
         resource=StorageMap,
         client=ocp_admin_client,
@@ -378,10 +393,11 @@ def get_storage_migration_map(
         source_provider_namespace=source_provider.ocp_resource.namespace,
         destination_provider_name=destination_provider.ocp_resource.name,
         destination_provider_namespace=destination_provider.ocp_resource.namespace,
-    )
-    return storage_map
+    ) as storage_map:
+        yield storage_map
 
 
+@contextmanager
 def get_network_migration_map(
     fixture_store: dict[str, Any],
     source_provider: BaseProvider,
@@ -391,7 +407,7 @@ def get_network_migration_map(
     target_namespace: str,
     source_provider_inventory: ForkliftInventory,
     vms: list[str],
-) -> NetworkMap:
+) -> Iterator[NetworkMap]:
     if not source_provider.ocp_resource:
         raise ValueError("source_provider.ocp_resource is not set")
 
@@ -404,7 +420,7 @@ def get_network_migration_map(
         multus_network_name=multus_network_name,
         vms=vms,
     )
-    network_map = create_and_store_resource(
+    with create_and_store_resource(
         fixture_store=fixture_store,
         resource=NetworkMap,
         client=ocp_admin_client,
@@ -414,10 +430,11 @@ def get_network_migration_map(
         source_provider_namespace=source_provider.ocp_resource.namespace,
         destination_provider_name=destination_provider.ocp_resource.name,
         destination_provider_namespace=destination_provider.ocp_resource.namespace,
-    )
-    return network_map
+    ) as network_map:
+        yield network_map
 
 
+@contextmanager
 def create_storagemap_and_networkmap(
     plan: dict,
     fixture_store: dict[str, Any],
@@ -427,29 +444,54 @@ def create_storagemap_and_networkmap(
     ocp_admin_client: DynamicClient,
     multus_network_name: str,
     target_namespace: str,
-) -> tuple[StorageMap, NetworkMap]:
-    vms = [vm["name"] for vm in plan["virtual_machines"]]
-    storage_migration_map = get_storage_migration_map(
-        fixture_store=fixture_store,
-        target_namespace=target_namespace,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        source_provider_inventory=source_provider_inventory,
-        ocp_admin_client=ocp_admin_client,
-        vms=vms,
-    )
+) -> Iterator[tuple[StorageMap, NetworkMap]]:
+    """Context manager to create storage and network maps with automatic cleanup.
 
-    network_migration_map = get_network_migration_map(
+    Creates both StorageMap and NetworkMap resources, yields them for use, and
+    automatically cleans them up when the context exits (respects fixture_store["skip_teardown"]).
+
+    Args:
+        plan: Test plan dictionary containing VM configurations
+        fixture_store: Session fixture store for tracking resources
+        source_provider: Source provider instance
+        destination_provider: Destination provider instance
+        source_provider_inventory: Forklift inventory for the source provider
+        ocp_admin_client: OpenShift DynamicClient
+        multus_network_name: Name of the multus network
+        target_namespace: Target namespace for migration
+
+    Yields:
+        tuple[StorageMap, NetworkMap]: The created storage and network maps
+
+    Example:
+        with create_storagemap_and_networkmap(...) as (storage_map, network_map):
+            # Use the maps
+            pass
+        # Maps are cleaned up here
+    """
+    vms = [vm["name"] for vm in plan["virtual_machines"]]
+
+    with get_storage_migration_map(
         fixture_store=fixture_store,
+        target_namespace=target_namespace,
         source_provider=source_provider,
         destination_provider=destination_provider,
         source_provider_inventory=source_provider_inventory,
         ocp_admin_client=ocp_admin_client,
-        multus_network_name=multus_network_name,
-        target_namespace=target_namespace,
         vms=vms,
-    )
-    return storage_migration_map, network_migration_map
+    ) as storage_migration_map:
+        with get_network_migration_map(
+            fixture_store=fixture_store,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            source_provider_inventory=source_provider_inventory,
+            ocp_admin_client=ocp_admin_client,
+            multus_network_name=multus_network_name,
+            target_namespace=target_namespace,
+            vms=vms,
+        ) as network_migration_map:
+            yield (storage_migration_map, network_migration_map)
+    # Both maps cleaned up here when context exits
 
 
 def verify_vm_disk_count(destination_provider, plan, target_namespace):

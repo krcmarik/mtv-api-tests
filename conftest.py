@@ -6,6 +6,7 @@ import logging
 import os
 import pickle
 import shutil
+from contextlib import ExitStack
 from pathlib import Path
 from shutil import rmtree
 from typing import Any
@@ -119,6 +120,7 @@ def pytest_sessionstart(session):
 
     _session_store = get_fixture_store(session)
     _session_store["teardown"] = {}
+    _session_store["skip_teardown"] = session.config.getoption("--skip-teardown")
 
     if not session.config.getoption("skip_data_collector"):
         _data_collector_path = Path(session.config.getoption("data_collector_path"))
@@ -326,15 +328,15 @@ def target_namespace(fixture_store, session_uuid, ocp_admin_client):
     unique_namespace_name = f"{session_uuid}{_target_namespace}"[:63]
     fixture_store["target_namespace"] = unique_namespace_name
 
-    namespace = create_and_store_resource(
+    with create_and_store_resource(
         fixture_store=fixture_store,
         resource=Namespace,
         client=ocp_admin_client,
         name=unique_namespace_name,
         label=label,
-    )
-    namespace.wait_for_status(status=namespace.Status.ACTIVE)
-    yield namespace.name
+    ) as namespace:
+        namespace.wait_for_status(status=namespace.Status.ACTIVE)
+        yield namespace.name
 
 
 @pytest.fixture(scope="session")
@@ -455,14 +457,13 @@ def destination_provider(session_uuid, ocp_admin_client, target_namespace, fixtu
         "spec": {"secret": {}, "type": "openshift", "url": ""},
     }
 
-    provider = create_and_store_resource(
+    with create_and_store_resource(
         fixture_store=fixture_store,
         resource=Provider,
         kind_dict=kind_dict,
         client=ocp_admin_client,
-    )
-
-    return OCPProvider(ocp_resource=provider, fixture_store=fixture_store)
+    ) as provider:
+        yield OCPProvider(ocp_resource=provider, fixture_store=fixture_store)
 
 
 @pytest.fixture(scope="session")
@@ -505,7 +506,12 @@ def source_provider(
 
 @pytest.fixture(scope="function")
 def multus_network_name(
-    fixture_store, target_namespace, ocp_admin_client, multus_cni_config, source_provider_inventory, request
+    fixture_store,
+    target_namespace,
+    ocp_admin_client,
+    multus_cni_config,
+    source_provider_inventory,
+    request,
 ):
     """
     Create NADs based on network requirements with unique names per test.
@@ -549,34 +555,37 @@ def multus_network_name(
     # Calculate how many multus NADs we need (all networks except the first one)
     multus_count = max(0, len(networks) - 1)  # First network goes to pod, rest to multus
 
-    # Create all required NADs with consistent naming
-    for i in range(1, multus_count + 1):
-        nad_name = f"{base_name}-{i}"
+    # Create all required NADs with consistent naming using ExitStack for automatic cleanup
+    with ExitStack() as stack:
+        for i in range(1, multus_count + 1):
+            nad_name = f"{base_name}-{i}"
 
-        # Use the provided config for the first NAD, custom config for others
-        if i == 1:
-            config = multus_cni_config
-        else:
-            cni_config = {"cniVersion": "0.3.1", "type": "bridge", "bridge": nad_name}
-            config = json.dumps(cni_config)
+            # Use the provided config for the first NAD, custom config for others
+            if i == 1:
+                config = multus_cni_config
+            else:
+                cni_config = {"cniVersion": "0.3.1", "type": "bridge", "bridge": nad_name}
+                config = json.dumps(cni_config)
 
-        create_and_store_resource(
-            fixture_store=fixture_store,
-            resource=NetworkAttachmentDefinition,
-            client=ocp_admin_client,
-            namespace=target_namespace,
-            config=config,
-            name=nad_name,
-        )
+            context = create_and_store_resource(
+                fixture_store=fixture_store,
+                resource=NetworkAttachmentDefinition,
+                client=ocp_admin_client,
+                namespace=target_namespace,
+                config=config,
+                name=nad_name,
+            )
 
-        created_nads.append(nad_name)
-        LOGGER.info(f"Created NAD: {nad_name} in namespace {target_namespace}")
+            stack.enter_context(context)  # Automatic LIFO cleanup
+            created_nads.append(nad_name)
+            LOGGER.info(f"Created NAD: {nad_name} in namespace {target_namespace}")
 
-    LOGGER.info(f"Created {len(created_nads)} NADs for migration: {created_nads}")
+        LOGGER.info(f"Created {len(created_nads)} NADs for migration: {created_nads}")
 
-    # Return the base name - consuming code will generate the same indexed names
-    # This maintains the contract: fixture creates NADs, returns base name for generation
-    yield base_name
+        # Return the base name - consuming code will generate the same indexed names
+        # This maintains the contract: fixture creates NADs, returns base name for generation
+        yield base_name
+        # All contexts automatically exit here in reverse order
 
 
 @pytest.fixture(scope="function")
@@ -613,20 +622,20 @@ def destination_ocp_secret(fixture_store, ocp_admin_client, target_namespace):
     if not api_key:
         raise ValueError("API key not found in configuration")
 
-    secret = create_and_store_resource(
+    with create_and_store_resource(
         client=ocp_admin_client,
         fixture_store=fixture_store,
         resource=Secret,
         namespace=target_namespace,
         # API key format: 'Bearer sha256~<token>', split it to get token.
         string_data={"token": api_key.split()[-1], "insecureSkipVerify": "true"},
-    )
-    yield secret
+    ) as secret:
+        yield secret
 
 
 @pytest.fixture(scope="session")
 def destination_ocp_provider(fixture_store, destination_ocp_secret, ocp_admin_client, session_uuid, target_namespace):
-    provider = create_and_store_resource(
+    with create_and_store_resource(
         client=ocp_admin_client,
         fixture_store=fixture_store,
         resource=Provider,
@@ -636,8 +645,8 @@ def destination_ocp_provider(fixture_store, destination_ocp_secret, ocp_admin_cl
         secret_namespace=destination_ocp_secret.namespace,
         url=ocp_admin_client.configuration.host,
         provider_type=Provider.ProviderType.OPENSHIFT,
-    )
-    yield OCPProvider(ocp_resource=provider, fixture_store=fixture_store)
+    ) as provider:
+        yield OCPProvider(ocp_resource=provider, fixture_store=fixture_store)
 
 
 @pytest.fixture(scope="function")
@@ -727,24 +736,24 @@ def plan(
 
     yield plan
 
-    for vm in plan["virtual_machines"]:
-        vm_obj = VirtualMachine(
-            client=ocp_admin_client,
-            name=vm["name"],
-            namespace=target_namespace,
-        )
-        fixture_store["teardown"].setdefault(vm_obj.kind, []).append({
-            "name": vm_obj.name,
-            "namespace": vm_obj.namespace,
-            "module": vm_obj.__module__,
-        })
+    LOGGER.info("plan fixture teardown: cleaning up migrated VMs")
+    # Respect --skip-teardown CLI flag
+    skip_teardown = fixture_store.get("skip_teardown", False)
+    if not skip_teardown:
+        # Delete VMs immediately after test completes (per-test cleanup)
+        for vm in plan["virtual_machines"]:
+            vm_obj = VirtualMachine(
+                client=ocp_admin_client,
+                name=vm["name"],
+                namespace=target_namespace,
+            )
 
-    for pod in Pod.get(client=ocp_admin_client, namespace=target_namespace):
-        fixture_store["teardown"].setdefault(pod.kind, []).append({
-            "name": pod.name,
-            "namespace": pod.namespace,
-            "module": pod.__module__,
-        })
+            try:
+                LOGGER.info("Deleting VM %s in plan fixture teardown", vm_obj.name)
+                vm_obj.clean_up(wait=True)
+                LOGGER.info("Successfully deleted VM %s", vm_obj.name)
+            except Exception as exc:
+                LOGGER.error("Failed to delete VM %s: %s", vm_obj.name, exc)
 
 
 @pytest.fixture(scope="session")
@@ -807,14 +816,17 @@ def source_provider_inventory(
 @pytest.fixture(scope="session")
 def source_vms_namespace(source_provider, fixture_store, ocp_admin_client, session_uuid):
     if source_provider.type == Provider.ProviderType.OPENSHIFT:
-        namespace = create_and_store_resource(
+        with create_and_store_resource(
             resource=Namespace,
             fixture_store=fixture_store,
             client=ocp_admin_client,
             name=f"{session_uuid}-source-vms",
             label={"mutatevirtualmachines.kubemacpool.io": "ignore"},
-        )
-        return namespace.name
+        ) as namespace:
+            yield namespace.name
+    else:
+        # For non-OpenShift providers (vSphere, RHV, OpenStack, OVA), namespace is not applicable
+        yield None
 
 
 @pytest.fixture(scope="session")
@@ -836,16 +848,18 @@ def source_vms_network(source_provider, source_vms_namespace, ocp_admin_client, 
 
         bridge_type_and_name = "cnv-bridge"
 
-        create_and_store_resource(
+        with create_and_store_resource(
             fixture_store=fixture_store,
             resource=NetworkAttachmentDefinition,
             client=ocp_admin_client,
             cni_type=bridge_type_and_name,
             namespace=source_vms_namespace,
             config=multus_cni_config,
-        )
-
-        return bridge_type_and_name
+        ):
+            yield bridge_type_and_name
+    else:
+        # For non-OpenShift providers (vSphere, RHV, OpenStack, OVA), source VMs network is not applicable
+        yield None
 
 
 @pytest.fixture(scope="session")
@@ -1006,16 +1020,15 @@ def copyoffload_storage_secret(
 
     LOGGER.info("Creating storage secret for copy-offload with vendor: %s", storage_vendor)
 
-    storage_secret = create_and_store_resource(
+    with create_and_store_resource(
         client=ocp_admin_client,
         fixture_store=fixture_store,
         resource=Secret,
         namespace=target_namespace,
         string_data=secret_data,
-    )
-
-    LOGGER.info("✓ Copy-offload storage secret created: %s", storage_secret.name)
-    return storage_secret
+    ) as storage_secret:
+        LOGGER.info("✓ Copy-offload storage secret created: %s", storage_secret.name)
+        yield storage_secret
 
 
 @pytest.fixture(scope="function")

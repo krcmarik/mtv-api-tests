@@ -1,4 +1,6 @@
-from typing import Any
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any, TypeVar
 
 import yaml
 from kubernetes.dynamic import DynamicClient
@@ -12,14 +14,39 @@ from utilities.naming import generate_name_with_uuid
 
 LOGGER = get_logger(__name__)
 
+T = TypeVar("T", bound=Resource)
 
+
+@contextmanager
 def create_and_store_resource(
     client: DynamicClient,
     fixture_store: dict[str, Any],
-    resource: type[Resource],
+    resource: type[T],
     test_name: str | None = None,
+    skip_teardown: bool | None = None,
     **kwargs: Any,
-) -> Any:
+) -> Iterator[T]:
+    """Context manager to create, track, and cleanup OpenShift resources.
+
+    Creates a resource, tracks it in fixture_store, and automatically cleans it up
+    when the context exits (unless skip_teardown=True).
+
+    Args:
+        client (DynamicClient): OpenShift DynamicClient
+        fixture_store (dict[str, Any]): Session fixture store for tracking resources
+        resource (type[T]): Resource class type to instantiate (generic)
+        test_name (str | None): Optional test name for tracking
+        skip_teardown (bool | None): If True, skip cleanup on context exit.
+            If None (default), use value from fixture_store["skip_teardown"].
+            Explicit True/False overrides the global setting.
+        **kwargs (Any): Additional arguments passed to resource constructor
+
+    Yields:
+        T: The deployed resource instance (specific type, not base Resource)
+
+    Raises:
+        ValueError: If both yaml_file and kind_dict are specified
+    """
     kwargs["client"] = client
 
     _resource_name = kwargs.get("name")
@@ -46,22 +73,41 @@ def create_and_store_resource(
         LOGGER.warning(f"'{_resource_name=}' is too long ({len(_resource_name)} > 63). Truncating.")
         _resource_name = _resource_name[-63:]
 
+    # Use explicit parameter if provided, else get from fixture_store
+    if skip_teardown is None:
+        skip_teardown = fixture_store.get("skip_teardown", False)
+
+    # Use Resource's built-in teardown based on skip_teardown parameter
+    kwargs["teardown"] = not skip_teardown
     kwargs["name"] = _resource_name
 
     _resource = resource(**kwargs)
 
     try:
-        _resource.deploy(wait=True)
+        # Normal case: we create the resource, Resource.__exit__() will clean it up
+        with _resource as deployed:
+            LOGGER.info("Storing %s %s in fixture store", deployed.kind, deployed.name)
+            _resource_dict = {"name": deployed.name, "namespace": deployed.namespace, "module": deployed.__module__}
+            if test_name:
+                _resource_dict["test_name"] = test_name
+            fixture_store["teardown"].setdefault(deployed.kind, []).append(_resource_dict)
+            yield deployed
+            # After yield, context exits and resource is cleaned up
+
+            # Resource was cleaned up by context manager __exit__
+            # Remove from tracking if teardown was enabled (resource was deleted)
+            if kwargs.get("teardown", True):  # teardown=True means resource was deleted
+                try:
+                    fixture_store["teardown"][deployed.kind].remove(_resource_dict)
+                    LOGGER.debug(
+                        "Removed %s %s from teardown tracking (cleaned by context)", deployed.kind, deployed.name
+                    )
+                except (KeyError, ValueError):
+                    pass  # Already removed or not in list
+
     except ConflictError:
-        LOGGER.warning(f"{_resource.kind} {_resource_name} already exists, reusing it.")
+        # Resource already exists - reuse it WITHOUT cleanup or tracking
+        LOGGER.warning("%s %s already exists, reusing it.", _resource.kind, _resource_name)
         _resource.wait()
-
-    LOGGER.info(f"Storing {_resource.kind} {_resource.name} in fixture store")
-    _resource_dict = {"name": _resource.name, "namespace": _resource.namespace, "module": _resource.__module__}
-
-    if test_name:
-        _resource_dict["test_name"] = test_name
-
-    fixture_store["teardown"].setdefault(_resource.kind, []).append(_resource_dict)
-
-    return _resource
+        # Don't add to teardown - we didn't create it, don't clean it up
+        yield _resource

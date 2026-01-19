@@ -285,25 +285,29 @@ if plan.get("warm_migration", False):  # OK
 Every OpenShift resource must use `utilities/resources.py:create_and_store_resource()`.
 
 ```python
+@contextmanager
 def create_and_store_resource(
     client: DynamicClient,
     fixture_store: dict[str, Any],
-    resource: type[Resource],
+    resource: type[T],
     test_name: str | None = None,
+    skip_teardown: bool | None = None,
     **kwargs: Any,
-) -> Any:
+) -> Iterator[T]:
 ```
 
 Features: auto-generates unique names, deploys and waits, stores in `fixture_store["teardown"]`, handles conflicts, truncates to 63 chars.
 
 ```python
 # Correct
-namespace = create_and_store_resource(
+with create_and_store_resource(
     fixture_store=fixture_store,
     resource=Namespace,
     client=ocp_admin_client,
     name="my-namespace",
-)
+) as namespace:
+    # Use namespace here
+    print(f"Created namespace: {namespace.name}")
 
 # Wrong - bypasses tracking
 namespace = Namespace(client=ocp_admin_client, name="my-namespace")

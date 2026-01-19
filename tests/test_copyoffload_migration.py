@@ -130,16 +130,6 @@ def test_copyoffload_thin_migration(
 
     # Create network migration map
     vms_names = [vm["name"] for vm in plan["virtual_machines"]]
-    network_migration_map = get_network_migration_map(
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        source_provider_inventory=source_provider_inventory,
-        ocp_admin_client=ocp_admin_client,
-        multus_network_name=multus_network_name,
-        target_namespace=target_namespace,
-        vms=vms_names,
-    )
 
     # Build offload plugin configuration
     offload_plugin_config = {
@@ -149,39 +139,47 @@ def test_copyoffload_thin_migration(
         }
     }
 
-    # Create storage migration map with copy-offload configuration
-    storage_migration_map = get_storage_migration_map(
+    # Execute copy-offload migration with proper context managers
+    with get_network_migration_map(
         fixture_store=fixture_store,
-        target_namespace=target_namespace,
         source_provider=source_provider,
         destination_provider=destination_provider,
-        ocp_admin_client=ocp_admin_client,
         source_provider_inventory=source_provider_inventory,
+        ocp_admin_client=ocp_admin_client,
+        multus_network_name=multus_network_name,
+        target_namespace=target_namespace,
         vms=vms_names,
-        storage_class=storage_class,
-        # Copy-offload specific parameters
-        datastore_id=datastore_id,
-        offload_plugin_config=offload_plugin_config,
-        access_mode="ReadWriteOnce",
-        volume_mode="Block",
-    )
-
-    # Execute copy-offload migration
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-        vm_ssh_connections=vm_ssh_connections,
-    )
+    ) as network_migration_map:
+        with get_storage_migration_map(
+            fixture_store=fixture_store,
+            target_namespace=target_namespace,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            ocp_admin_client=ocp_admin_client,
+            source_provider_inventory=source_provider_inventory,
+            vms=vms_names,
+            storage_class=storage_class,
+            # Copy-offload specific parameters
+            datastore_id=datastore_id,
+            offload_plugin_config=offload_plugin_config,
+            access_mode="ReadWriteOnce",
+            volume_mode="Block",
+        ) as storage_migration_map:
+            migrate_vms(
+                ocp_admin_client=ocp_admin_client,
+                request=request,
+                fixture_store=fixture_store,
+                source_provider=source_provider,
+                destination_provider=destination_provider,
+                plan=plan,
+                network_migration_map=network_migration_map,
+                storage_migration_map=storage_migration_map,
+                source_provider_data=source_provider_data,
+                target_namespace=target_namespace,
+                source_vms_namespace=source_vms_namespace,
+                source_provider_inventory=source_provider_inventory,
+                vm_ssh_connections=vm_ssh_connections,
+            )
 
 
 @pytest.mark.copyoffload
@@ -268,16 +266,6 @@ def test_copyoffload_thin_snapshots_migration(
 
     # Create network migration map
     vms_names = [vm["name"] for vm in plan["virtual_machines"]]
-    network_migration_map = get_network_migration_map(
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        source_provider_inventory=source_provider_inventory,
-        ocp_admin_client=ocp_admin_client,
-        multus_network_name=multus_network_name,
-        target_namespace=target_namespace,
-        vms=vms_names,
-    )
 
     # Build offload plugin configuration
     offload_plugin_config = {
@@ -287,39 +275,47 @@ def test_copyoffload_thin_snapshots_migration(
         }
     }
 
-    # Create storage migration map with copy-offload configuration
-    storage_migration_map = get_storage_migration_map(
+    # Execute copy-offload migration with proper context managers
+    with get_network_migration_map(
         fixture_store=fixture_store,
-        target_namespace=target_namespace,
         source_provider=source_provider,
         destination_provider=destination_provider,
-        ocp_admin_client=ocp_admin_client,
         source_provider_inventory=source_provider_inventory,
+        ocp_admin_client=ocp_admin_client,
+        multus_network_name=multus_network_name,
+        target_namespace=target_namespace,
         vms=vms_names,
-        storage_class=storage_class,
-        # Copy-offload specific parameters
-        datastore_id=datastore_id,
-        offload_plugin_config=offload_plugin_config,
-        access_mode="ReadWriteOnce",
-        volume_mode="Block",
-    )
-
-    # Execute copy-offload migration
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-        vm_ssh_connections=vm_ssh_connections,
-    )
+    ) as network_migration_map:
+        with get_storage_migration_map(
+            fixture_store=fixture_store,
+            target_namespace=target_namespace,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            ocp_admin_client=ocp_admin_client,
+            source_provider_inventory=source_provider_inventory,
+            vms=vms_names,
+            storage_class=storage_class,
+            # Copy-offload specific parameters
+            datastore_id=datastore_id,
+            offload_plugin_config=offload_plugin_config,
+            access_mode="ReadWriteOnce",
+            volume_mode="Block",
+        ) as storage_migration_map:
+            migrate_vms(
+                ocp_admin_client=ocp_admin_client,
+                request=request,
+                fixture_store=fixture_store,
+                source_provider=source_provider,
+                destination_provider=destination_provider,
+                plan=plan,
+                network_migration_map=network_migration_map,
+                storage_migration_map=storage_migration_map,
+                source_provider_data=source_provider_data,
+                target_namespace=target_namespace,
+                source_vms_namespace=source_vms_namespace,
+                source_provider_inventory=source_provider_inventory,
+                vm_ssh_connections=vm_ssh_connections,
+            )
 
 
 @pytest.mark.copyoffload
@@ -403,16 +399,6 @@ def test_copyoffload_thick_lazy_migration(
 
     # Create network migration map
     vms_names = [vm["name"] for vm in plan["virtual_machines"]]
-    network_migration_map = get_network_migration_map(
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        source_provider_inventory=source_provider_inventory,
-        ocp_admin_client=ocp_admin_client,
-        multus_network_name=multus_network_name,
-        target_namespace=target_namespace,
-        vms=vms_names,
-    )
 
     # Build offload plugin configuration
     offload_plugin_config = {
@@ -422,39 +408,47 @@ def test_copyoffload_thick_lazy_migration(
         }
     }
 
-    # Create storage migration map with copy-offload configuration
-    storage_migration_map = get_storage_migration_map(
+    # Execute copy-offload migration with proper context managers
+    with get_network_migration_map(
         fixture_store=fixture_store,
-        target_namespace=target_namespace,
         source_provider=source_provider,
         destination_provider=destination_provider,
-        ocp_admin_client=ocp_admin_client,
         source_provider_inventory=source_provider_inventory,
+        ocp_admin_client=ocp_admin_client,
+        multus_network_name=multus_network_name,
+        target_namespace=target_namespace,
         vms=vms_names,
-        storage_class=storage_class,
-        # Copy-offload specific parameters
-        datastore_id=datastore_id,
-        offload_plugin_config=offload_plugin_config,
-        access_mode="ReadWriteOnce",
-        volume_mode="Block",
-    )
-
-    # Execute copy-offload migration
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-        vm_ssh_connections=vm_ssh_connections,
-    )
+    ) as network_migration_map:
+        with get_storage_migration_map(
+            fixture_store=fixture_store,
+            target_namespace=target_namespace,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            ocp_admin_client=ocp_admin_client,
+            source_provider_inventory=source_provider_inventory,
+            vms=vms_names,
+            storage_class=storage_class,
+            # Copy-offload specific parameters
+            datastore_id=datastore_id,
+            offload_plugin_config=offload_plugin_config,
+            access_mode="ReadWriteOnce",
+            volume_mode="Block",
+        ) as storage_migration_map:
+            migrate_vms(
+                ocp_admin_client=ocp_admin_client,
+                request=request,
+                fixture_store=fixture_store,
+                source_provider=source_provider,
+                destination_provider=destination_provider,
+                plan=plan,
+                network_migration_map=network_migration_map,
+                storage_migration_map=storage_migration_map,
+                source_provider_data=source_provider_data,
+                target_namespace=target_namespace,
+                source_vms_namespace=source_vms_namespace,
+                source_provider_inventory=source_provider_inventory,
+                vm_ssh_connections=vm_ssh_connections,
+            )
 
 
 @pytest.mark.copyoffload
@@ -540,16 +534,6 @@ def test_copyoffload_multi_disk_migration(
 
     # Create network migration map
     vms = [vm["name"] for vm in plan["virtual_machines"]]
-    network_migration_map = get_network_migration_map(
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        source_provider_inventory=source_provider_inventory,
-        ocp_admin_client=ocp_admin_client,
-        multus_network_name=multus_network_name,
-        target_namespace=target_namespace,
-        vms=vms,
-    )
 
     # Build offload plugin configuration
     offload_plugin_config = {
@@ -559,39 +543,47 @@ def test_copyoffload_multi_disk_migration(
         }
     }
 
-    # Create storage migration map with copy-offload configuration
-    storage_migration_map = get_storage_migration_map(
+    # Execute copy-offload migration with proper context managers
+    with get_network_migration_map(
         fixture_store=fixture_store,
-        target_namespace=target_namespace,
         source_provider=source_provider,
         destination_provider=destination_provider,
-        ocp_admin_client=ocp_admin_client,
         source_provider_inventory=source_provider_inventory,
+        ocp_admin_client=ocp_admin_client,
+        multus_network_name=multus_network_name,
+        target_namespace=target_namespace,
         vms=vms,
-        storage_class=storage_class,
-        # Copy-offload specific parameters
-        datastore_id=datastore_id,
-        offload_plugin_config=offload_plugin_config,
-        access_mode="ReadWriteOnce",
-        volume_mode="Block",
-    )
-
-    # Execute copy-offload migration
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-        vm_ssh_connections=vm_ssh_connections,
-    )
+    ) as network_migration_map:
+        with get_storage_migration_map(
+            fixture_store=fixture_store,
+            target_namespace=target_namespace,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            ocp_admin_client=ocp_admin_client,
+            source_provider_inventory=source_provider_inventory,
+            vms=vms,
+            storage_class=storage_class,
+            # Copy-offload specific parameters
+            datastore_id=datastore_id,
+            offload_plugin_config=offload_plugin_config,
+            access_mode="ReadWriteOnce",
+            volume_mode="Block",
+        ) as storage_migration_map:
+            migrate_vms(
+                ocp_admin_client=ocp_admin_client,
+                request=request,
+                fixture_store=fixture_store,
+                source_provider=source_provider,
+                destination_provider=destination_provider,
+                plan=plan,
+                network_migration_map=network_migration_map,
+                storage_migration_map=storage_migration_map,
+                source_provider_data=source_provider_data,
+                target_namespace=target_namespace,
+                source_vms_namespace=source_vms_namespace,
+                source_provider_inventory=source_provider_inventory,
+                vm_ssh_connections=vm_ssh_connections,
+            )
 
     # Verify that the correct number of disks were migrated
     verify_vm_disk_count(destination_provider=destination_provider, plan=plan, target_namespace=target_namespace)
@@ -669,16 +661,6 @@ def test_copyoffload_multi_disk_different_path_migration(
 
     # Create network migration map
     vms = [vm["name"] for vm in plan["virtual_machines"]]
-    network_migration_map = get_network_migration_map(
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        source_provider_inventory=source_provider_inventory,
-        ocp_admin_client=ocp_admin_client,
-        multus_network_name=multus_network_name,
-        target_namespace=target_namespace,
-        vms=vms,
-    )
 
     # Build offload plugin configuration
     offload_plugin_config = {
@@ -688,38 +670,46 @@ def test_copyoffload_multi_disk_different_path_migration(
         }
     }
 
-    # Create storage migration map with copy-offload configuration
-    storage_migration_map = get_storage_migration_map(
+    # Execute copy-offload migration with proper context managers
+    with get_network_migration_map(
         fixture_store=fixture_store,
-        target_namespace=target_namespace,
         source_provider=source_provider,
         destination_provider=destination_provider,
-        ocp_admin_client=ocp_admin_client,
         source_provider_inventory=source_provider_inventory,
+        ocp_admin_client=ocp_admin_client,
+        multus_network_name=multus_network_name,
+        target_namespace=target_namespace,
         vms=vms,
-        storage_class=storage_class,
-        # Copy-offload specific parameters
-        datastore_id=datastore_id,
-        offload_plugin_config=offload_plugin_config,
-        access_mode="ReadWriteOnce",
-        volume_mode="Block",
-    )
-
-    # Execute copy-offload migration
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-    )
+    ) as network_migration_map:
+        with get_storage_migration_map(
+            fixture_store=fixture_store,
+            target_namespace=target_namespace,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            ocp_admin_client=ocp_admin_client,
+            source_provider_inventory=source_provider_inventory,
+            vms=vms,
+            storage_class=storage_class,
+            # Copy-offload specific parameters
+            datastore_id=datastore_id,
+            offload_plugin_config=offload_plugin_config,
+            access_mode="ReadWriteOnce",
+            volume_mode="Block",
+        ) as storage_migration_map:
+            migrate_vms(
+                ocp_admin_client=ocp_admin_client,
+                request=request,
+                fixture_store=fixture_store,
+                source_provider=source_provider,
+                destination_provider=destination_provider,
+                plan=plan,
+                network_migration_map=network_migration_map,
+                storage_migration_map=storage_migration_map,
+                source_provider_data=source_provider_data,
+                target_namespace=target_namespace,
+                source_vms_namespace=source_vms_namespace,
+                source_provider_inventory=source_provider_inventory,
+            )
 
     # Verify that the correct number of disks were migrated
     verify_vm_disk_count(destination_provider=destination_provider, plan=plan, target_namespace=target_namespace)
@@ -777,16 +767,6 @@ def test_copyoffload_rdm_virtual_disk_migration(
         pytest.fail("rdm_lun_uuid is required in copyoffload configuration for RDM disk tests")
 
     vms = [vm["name"] for vm in plan["virtual_machines"]]
-    network_migration_map = get_network_migration_map(
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        source_provider_inventory=source_provider_inventory,
-        ocp_admin_client=ocp_admin_client,
-        multus_network_name=multus_network_name,
-        target_namespace=target_namespace,
-        vms=vms,
-    )
 
     offload_plugin_config = {
         "vsphereXcopyConfig": {
@@ -795,36 +775,46 @@ def test_copyoffload_rdm_virtual_disk_migration(
         }
     }
 
-    storage_migration_map = get_storage_migration_map(
+    # Execute copy-offload migration with proper context managers
+    with get_network_migration_map(
         fixture_store=fixture_store,
-        target_namespace=target_namespace,
         source_provider=source_provider,
         destination_provider=destination_provider,
-        ocp_admin_client=ocp_admin_client,
         source_provider_inventory=source_provider_inventory,
+        ocp_admin_client=ocp_admin_client,
+        multus_network_name=multus_network_name,
+        target_namespace=target_namespace,
         vms=vms,
-        storage_class=storage_class,
-        datastore_id=datastore_id,
-        offload_plugin_config=offload_plugin_config,
-        access_mode="ReadWriteOnce",
-        volume_mode="Block",
-    )
-
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-        vm_ssh_connections=vm_ssh_connections,
-    )
+    ) as network_migration_map:
+        with get_storage_migration_map(
+            fixture_store=fixture_store,
+            target_namespace=target_namespace,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            ocp_admin_client=ocp_admin_client,
+            source_provider_inventory=source_provider_inventory,
+            vms=vms,
+            storage_class=storage_class,
+            datastore_id=datastore_id,
+            offload_plugin_config=offload_plugin_config,
+            access_mode="ReadWriteOnce",
+            volume_mode="Block",
+        ) as storage_migration_map:
+            migrate_vms(
+                ocp_admin_client=ocp_admin_client,
+                request=request,
+                fixture_store=fixture_store,
+                source_provider=source_provider,
+                destination_provider=destination_provider,
+                plan=plan,
+                network_migration_map=network_migration_map,
+                storage_migration_map=storage_migration_map,
+                source_provider_data=source_provider_data,
+                target_namespace=target_namespace,
+                source_vms_namespace=source_vms_namespace,
+                source_provider_inventory=source_provider_inventory,
+                vm_ssh_connections=vm_ssh_connections,
+            )
 
     # Verify that the correct number of disks were migrated (1 base + 1 RDM = 2)
     verify_vm_disk_count(destination_provider=destination_provider, plan=plan, target_namespace=target_namespace)
@@ -946,16 +936,6 @@ def test_copyoffload_multi_datastore_migration(
 
     # Create network migration map
     vms_names = [vm["name"] for vm in plan["virtual_machines"]]
-    network_migration_map = get_network_migration_map(
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        source_provider_inventory=source_provider_inventory,
-        ocp_admin_client=ocp_admin_client,
-        multus_network_name=multus_network_name,
-        target_namespace=target_namespace,
-        vms=vms_names,
-    )
 
     # Build offload plugin configuration
     offload_plugin_config = {
@@ -965,38 +945,46 @@ def test_copyoffload_multi_datastore_migration(
         }
     }
 
-    # Create storage migration map with primary and secondary datastores
-    storage_migration_map = get_storage_migration_map(
+    # Execute copy-offload migration with proper context managers
+    with get_network_migration_map(
         fixture_store=fixture_store,
-        target_namespace=target_namespace,
         source_provider=source_provider,
         destination_provider=destination_provider,
-        ocp_admin_client=ocp_admin_client,
         source_provider_inventory=source_provider_inventory,
+        ocp_admin_client=ocp_admin_client,
+        multus_network_name=multus_network_name,
+        target_namespace=target_namespace,
         vms=vms_names,
-        storage_class=storage_class,
-        datastore_id=datastore_id,
-        secondary_datastore_id=secondary_datastore_id,
-        offload_plugin_config=offload_plugin_config,
-        access_mode="ReadWriteOnce",
-        volume_mode="Block",
-    )
-
-    # Execute copy-offload migration
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-    )
+    ) as network_migration_map:
+        with get_storage_migration_map(
+            fixture_store=fixture_store,
+            target_namespace=target_namespace,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            ocp_admin_client=ocp_admin_client,
+            source_provider_inventory=source_provider_inventory,
+            vms=vms_names,
+            storage_class=storage_class,
+            datastore_id=datastore_id,
+            secondary_datastore_id=secondary_datastore_id,
+            offload_plugin_config=offload_plugin_config,
+            access_mode="ReadWriteOnce",
+            volume_mode="Block",
+        ) as storage_migration_map:
+            migrate_vms(
+                ocp_admin_client=ocp_admin_client,
+                request=request,
+                fixture_store=fixture_store,
+                source_provider=source_provider,
+                destination_provider=destination_provider,
+                plan=plan,
+                network_migration_map=network_migration_map,
+                storage_migration_map=storage_migration_map,
+                source_provider_data=source_provider_data,
+                target_namespace=target_namespace,
+                source_vms_namespace=source_vms_namespace,
+                source_provider_inventory=source_provider_inventory,
+            )
 
     # Verify that the correct number of disks were migrated (1 base + 1 added = 2 total)
     verify_vm_disk_count(destination_provider=destination_provider, plan=plan, target_namespace=target_namespace)
@@ -1055,16 +1043,6 @@ def test_copyoffload_independent_persistent_disk_migration(
 
     # Create network migration map
     vms_names = [vm["name"] for vm in plan["virtual_machines"]]
-    network_migration_map = get_network_migration_map(
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        source_provider_inventory=source_provider_inventory,
-        ocp_admin_client=ocp_admin_client,
-        multus_network_name=multus_network_name,
-        target_namespace=target_namespace,
-        vms=vms_names,
-    )
 
     # Build offload plugin configuration
     offload_plugin_config = {
@@ -1074,39 +1052,47 @@ def test_copyoffload_independent_persistent_disk_migration(
         }
     }
 
-    # Create storage migration map with copy-offload configuration
-    storage_migration_map = get_storage_migration_map(
+    # Execute copy-offload migration with proper context managers
+    with get_network_migration_map(
         fixture_store=fixture_store,
-        target_namespace=target_namespace,
         source_provider=source_provider,
         destination_provider=destination_provider,
-        ocp_admin_client=ocp_admin_client,
         source_provider_inventory=source_provider_inventory,
+        ocp_admin_client=ocp_admin_client,
+        multus_network_name=multus_network_name,
+        target_namespace=target_namespace,
         vms=vms_names,
-        storage_class=storage_class,
-        # Copy-offload specific parameters
-        datastore_id=datastore_id,
-        offload_plugin_config=offload_plugin_config,
-        access_mode="ReadWriteOnce",
-        volume_mode="Block",
-    )
-
-    # Execute copy-offload migration
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-        vm_ssh_connections=vm_ssh_connections,
-    )
+    ) as network_migration_map:
+        with get_storage_migration_map(
+            fixture_store=fixture_store,
+            target_namespace=target_namespace,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            ocp_admin_client=ocp_admin_client,
+            source_provider_inventory=source_provider_inventory,
+            vms=vms_names,
+            storage_class=storage_class,
+            # Copy-offload specific parameters
+            datastore_id=datastore_id,
+            offload_plugin_config=offload_plugin_config,
+            access_mode="ReadWriteOnce",
+            volume_mode="Block",
+        ) as storage_migration_map:
+            migrate_vms(
+                ocp_admin_client=ocp_admin_client,
+                request=request,
+                fixture_store=fixture_store,
+                source_provider=source_provider,
+                destination_provider=destination_provider,
+                plan=plan,
+                network_migration_map=network_migration_map,
+                storage_migration_map=storage_migration_map,
+                source_provider_data=source_provider_data,
+                target_namespace=target_namespace,
+                source_vms_namespace=source_vms_namespace,
+                source_provider_inventory=source_provider_inventory,
+                vm_ssh_connections=vm_ssh_connections,
+            )
 
     # Verify that the correct number of disks were migrated
     verify_vm_disk_count(destination_provider=destination_provider, plan=plan, target_namespace=target_namespace)
@@ -1163,16 +1149,6 @@ def test_copyoffload_independent_nonpersistent_disk_migration(
 
     # Create network migration map
     vms_names = [vm["name"] for vm in plan["virtual_machines"]]
-    network_migration_map = get_network_migration_map(
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        source_provider_inventory=source_provider_inventory,
-        ocp_admin_client=ocp_admin_client,
-        multus_network_name=multus_network_name,
-        target_namespace=target_namespace,
-        vms=vms_names,
-    )
 
     # Build offload plugin configuration
     offload_plugin_config = {
@@ -1182,39 +1158,47 @@ def test_copyoffload_independent_nonpersistent_disk_migration(
         }
     }
 
-    # Create storage migration map with copy-offload configuration
-    storage_migration_map = get_storage_migration_map(
+    # Execute copy-offload migration with proper context managers
+    with get_network_migration_map(
         fixture_store=fixture_store,
-        target_namespace=target_namespace,
         source_provider=source_provider,
         destination_provider=destination_provider,
-        ocp_admin_client=ocp_admin_client,
         source_provider_inventory=source_provider_inventory,
+        ocp_admin_client=ocp_admin_client,
+        multus_network_name=multus_network_name,
+        target_namespace=target_namespace,
         vms=vms_names,
-        storage_class=storage_class,
-        # Copy-offload specific parameters
-        datastore_id=datastore_id,
-        offload_plugin_config=offload_plugin_config,
-        access_mode="ReadWriteOnce",
-        volume_mode="Block",
-    )
-
-    # Execute copy-offload migration
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-        vm_ssh_connections=vm_ssh_connections,
-    )
+    ) as network_migration_map:
+        with get_storage_migration_map(
+            fixture_store=fixture_store,
+            target_namespace=target_namespace,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            ocp_admin_client=ocp_admin_client,
+            source_provider_inventory=source_provider_inventory,
+            vms=vms_names,
+            storage_class=storage_class,
+            # Copy-offload specific parameters
+            datastore_id=datastore_id,
+            offload_plugin_config=offload_plugin_config,
+            access_mode="ReadWriteOnce",
+            volume_mode="Block",
+        ) as storage_migration_map:
+            migrate_vms(
+                ocp_admin_client=ocp_admin_client,
+                request=request,
+                fixture_store=fixture_store,
+                source_provider=source_provider,
+                destination_provider=destination_provider,
+                plan=plan,
+                network_migration_map=network_migration_map,
+                storage_migration_map=storage_migration_map,
+                source_provider_data=source_provider_data,
+                target_namespace=target_namespace,
+                source_vms_namespace=source_vms_namespace,
+                source_provider_inventory=source_provider_inventory,
+                vm_ssh_connections=vm_ssh_connections,
+            )
 
     # Verify that the correct number of disks were migrated (1 base + 1 added = 2 total)
     verify_vm_disk_count(destination_provider=destination_provider, plan=plan, target_namespace=target_namespace)
@@ -1340,18 +1324,7 @@ def test_copyoffload_warm_migration(
     LOGGER.info("Starting copy-offload warm migration test")
     LOGGER.info("Datastore: %s, Storage vendor: %s", datastore_id, storage_vendor_product)
 
-    # Create network migration map
     vms_names = [vm["name"] for vm in plan["virtual_machines"]]
-    network_migration_map = get_network_migration_map(
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        source_provider_inventory=source_provider_inventory,
-        ocp_admin_client=ocp_admin_client,
-        multus_network_name=multus_network_name,
-        target_namespace=target_namespace,
-        vms=vms_names,
-    )
 
     # Build offload plugin configuration
     offload_plugin_config = {
@@ -1361,40 +1334,48 @@ def test_copyoffload_warm_migration(
         }
     }
 
-    # Create storage migration map with copy-offload plugin
-    storage_migration_map = get_storage_migration_map(
+    # Execute copy-offload warm migration with proper context managers
+    with get_network_migration_map(
         fixture_store=fixture_store,
-        target_namespace=target_namespace,
         source_provider=source_provider,
         destination_provider=destination_provider,
-        ocp_admin_client=ocp_admin_client,
         source_provider_inventory=source_provider_inventory,
+        ocp_admin_client=ocp_admin_client,
+        multus_network_name=multus_network_name,
+        target_namespace=target_namespace,
         vms=vms_names,
-        storage_class=storage_class,
-        datastore_id=datastore_id,
-        offload_plugin_config=offload_plugin_config,
-        access_mode="ReadWriteOnce",
-        volume_mode="Block",
-    )
-
-    # Execute warm migration with copy-offload
-    LOGGER.info("Executing warm migration with copy-offload acceleration")
-    migrate_vms(
-        ocp_admin_client=ocp_admin_client,
-        request=request,
-        fixture_store=fixture_store,
-        source_provider=source_provider,
-        destination_provider=destination_provider,
-        plan=plan,
-        network_migration_map=network_migration_map,
-        storage_migration_map=storage_migration_map,
-        source_provider_data=source_provider_data,
-        cut_over=get_cutover_value(),  # Enable warm migration cutover
-        target_namespace=target_namespace,
-        source_vms_namespace=source_vms_namespace,
-        source_provider_inventory=source_provider_inventory,
-        vm_ssh_connections=vm_ssh_connections,
-    )
+    ) as network_migration_map:
+        with get_storage_migration_map(
+            fixture_store=fixture_store,
+            target_namespace=target_namespace,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            ocp_admin_client=ocp_admin_client,
+            source_provider_inventory=source_provider_inventory,
+            vms=vms_names,
+            storage_class=storage_class,
+            datastore_id=datastore_id,
+            offload_plugin_config=offload_plugin_config,
+            access_mode="ReadWriteOnce",
+            volume_mode="Block",
+        ) as storage_migration_map:
+            LOGGER.info("Executing warm migration with copy-offload acceleration")
+            migrate_vms(
+                ocp_admin_client=ocp_admin_client,
+                request=request,
+                fixture_store=fixture_store,
+                source_provider=source_provider,
+                destination_provider=destination_provider,
+                plan=plan,
+                network_migration_map=network_migration_map,
+                storage_migration_map=storage_migration_map,
+                source_provider_data=source_provider_data,
+                cut_over=get_cutover_value(),
+                target_namespace=target_namespace,
+                source_vms_namespace=source_vms_namespace,
+                source_provider_inventory=source_provider_inventory,
+                vm_ssh_connections=vm_ssh_connections,
+            )
 
     # Verify that the VM disk was migrated (1 disk from template)
     verify_vm_disk_count(destination_provider=destination_provider, plan=plan, target_namespace=target_namespace)
