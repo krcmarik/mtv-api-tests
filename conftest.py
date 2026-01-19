@@ -42,6 +42,7 @@ from libs.forklift_inventory import (
     VsphereForkliftInventory,
 )
 from libs.providers.openshift import OCPProvider
+from utilities.copyoffload_constants import SUPPORTED_VENDORS
 from utilities.copyoffload_migration import get_copyoffload_credential
 from utilities.esxi import install_ssh_key_on_esxi, remove_ssh_key_from_esxi
 from utilities.logger import separator, setup_logging
@@ -944,23 +945,66 @@ def copyoffload_storage_secret(
     storage_vendor = copyoffload_cfg.get("storage_vendor_product")
     if not storage_vendor:
         raise ValueError(
-            "storage_vendor_product is required in copyoffload configuration. Valid values: 'ontap', 'vantara'"
+            f"storage_vendor_product is required in copyoffload configuration. "
+            f"Valid values: {', '.join(SUPPORTED_VENDORS)}"
+        )
+    if storage_vendor not in SUPPORTED_VENDORS:
+        LOGGER.warning(
+            "storage_vendor_product '%s' is not in the list of known vendors: %s. "
+            "Continuing anyway, but this may cause issues if the vendor is not supported by the populator.",
+            storage_vendor,
+            SUPPORTED_VENDORS,
         )
 
-    # Base secret data
+    # Base secret data (required for all vendors)
     secret_data = {
         "STORAGE_HOSTNAME": storage_hostname,
         "STORAGE_USERNAME": storage_username,
         "STORAGE_PASSWORD": storage_password,
     }
 
-    # Add vendor-specific configuration
-    if storage_vendor == "ontap":
-        ontap_svm = get_copyoffload_credential("ontap_svm", copyoffload_cfg)
-        if ontap_svm:
-            secret_data["ONTAP_SVM"] = ontap_svm
+    # Vendor-specific configuration mapping
+    # Maps vendor name to list of (config_key, secret_key, required) tuples
+    # Based on forklift vsphere-xcopy-volume-populator code and README
+    # NOTE: Keys must match SUPPORTED_VENDORS constant defined at module level
+    vendor_specific_fields = {
+        "ontap": [("ontap_svm", "ONTAP_SVM", True)],
+        "vantara": [
+            ("vantara_storage_id", "STORAGE_ID", True),
+            ("vantara_storage_port", "STORAGE_PORT", True),
+            ("vantara_hostgroup_id_list", "HOSTGROUP_ID_LIST", True),
+        ],
+        "primera3par": [],  # Only basic credentials required
+        "pureFlashArray": [("pure_cluster_prefix", "PURE_CLUSTER_PREFIX", True)],
+        "powerflex": [("powerflex_system_id", "POWERFLEX_SYSTEM_ID", True)],
+        "powermax": [("powermax_symmetrix_id", "POWERMAX_SYMMETRIX_ID", True)],
+        "powerstore": [],  # Only basic credentials required
+        "infinibox": [],  # Only basic credentials required
+        "flashsystem": [],  # Only basic credentials required
+    }
 
-    LOGGER.info(f"Creating storage secret for copy-offload with vendor: {storage_vendor}")
+    # Ensure vendor_specific_fields keys match SUPPORTED_VENDORS to prevent drift
+    assert set(vendor_specific_fields.keys()) == set(SUPPORTED_VENDORS), (
+        f"vendor_specific_fields keys must match SUPPORTED_VENDORS. "
+        f"Missing in vendor_specific_fields: {set(SUPPORTED_VENDORS) - set(vendor_specific_fields.keys())}. "
+        f"Extra in vendor_specific_fields: {set(vendor_specific_fields.keys()) - set(SUPPORTED_VENDORS)}"
+    )
+
+    # Add vendor-specific fields if configured
+    if storage_vendor in vendor_specific_fields:
+        for config_key, secret_key, required in vendor_specific_fields[storage_vendor]:
+            value = get_copyoffload_credential(config_key, copyoffload_cfg)
+            if value:
+                secret_data[secret_key] = value
+                LOGGER.info("✓ Added vendor-specific field: %s", secret_key)
+            elif required:
+                env_var_name = f"COPYOFFLOAD_{config_key.upper()}"
+                raise ValueError(
+                    f"Required vendor-specific field '{config_key}' not found for vendor '{storage_vendor}'. "
+                    f"Add it to .providers.json copyoffload section or set environment variable: {env_var_name}"
+                )
+
+    LOGGER.info("Creating storage secret for copy-offload with vendor: %s", storage_vendor)
 
     storage_secret = create_and_store_resource(
         client=ocp_admin_client,
@@ -970,7 +1014,7 @@ def copyoffload_storage_secret(
         string_data=secret_data,
     )
 
-    LOGGER.info(f"✓ Copy-offload storage secret created: {storage_secret.name}")
+    LOGGER.info("✓ Copy-offload storage secret created: %s", storage_secret.name)
     return storage_secret
 
 
@@ -999,9 +1043,10 @@ def setup_copyoffload_ssh(source_provider, source_provider_data, copyoffload_con
     datastore_name = source_provider.get_datastore_name_by_id(datastore_id)
 
     # Get ESXi credentials from the 'copyoffload' config section
-    esxi_host = copyoffload_cfg.get("esxi_host")
-    esxi_user = copyoffload_cfg.get("esxi_user")
-    esxi_password = copyoffload_cfg.get("esxi_password")
+    # These support environment variable overrides (COPYOFFLOAD_ESXI_HOST, etc.)
+    esxi_host = get_copyoffload_credential("esxi_host", copyoffload_cfg)
+    esxi_user = get_copyoffload_credential("esxi_user", copyoffload_cfg)
+    esxi_password = get_copyoffload_credential("esxi_password", copyoffload_cfg)
 
     if not all([esxi_host, esxi_user, esxi_password]):
         pytest.fail(

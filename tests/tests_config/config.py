@@ -189,6 +189,27 @@ tests_params: dict = {
         "warm_migration": False,
         "copyoffload": True,
     },
+    "test_copyoffload_independent_nonpersistent_disk_migration": {
+        "virtual_machines": [
+            {
+                "name": "xcopy-template-test",
+                "source_vm_power": "off",
+                "target_power_state": "on",
+                "guest_agent": True,
+                "clone": True,
+                "disk_type": "thin",
+                "add_disks": [
+                    {
+                        "size_gb": 30,
+                        "disk_mode": "independent_nonpersistent",
+                        "provision_type": "thin",
+                    },
+                ],
+            },
+        ],
+        "warm_migration": False,
+        "copyoffload": True,
+    },
     "test_copyoffload_warm_migration": {
         "virtual_machines": [
             {
