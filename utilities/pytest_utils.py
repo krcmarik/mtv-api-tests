@@ -54,28 +54,97 @@ def collect_created_resources(session_store: dict[str, Any], data_collector_path
             LOGGER.error(f"Failed to store resources.json due to: {ex}")
 
 
-def session_teardown(session_store: dict[str, Any]) -> None:
+def session_teardown(session_store: dict[str, Any], session_scoped_only: bool = False) -> None:
+    """Clean up resources at the end of a pytest session.
+
+    Args:
+        session_store (dict[str, Any]): The session fixture store containing all tracked resources
+        session_scoped_only (bool): If True, only clean up session-scoped resources. Defaults to False.
+
+    Raises:
+        SessionTeardownError: If any resources fail to clean up
+    """
     LOGGER.info("Running teardown to delete all created resources")
 
     ocp_client = get_cluster_client()
 
     # When running in parallel (-n auto) `session_store` can be empty.
     if session_teardown_resources := session_store.get("teardown"):
+        # Filter resources by scope if session_scoped_only is True
+        if session_scoped_only:
+            filtered_resources = {}
+            for kind, resources in session_teardown_resources.items():
+                session_res = [r for r in resources if r.get("scope", "session") == "session"]
+                if session_res:
+                    filtered_resources[kind] = session_res
+            session_teardown_resources = filtered_resources
+
         for migration_name in session_teardown_resources.get(Migration.kind, []):
             migration = Migration(name=migration_name["name"], namespace=migration_name["namespace"], client=ocp_client)
             cancel_migration(migration=migration)
 
-        for plan_name in session_teardown_resources.get(Plan.kind, []):
-            plan = Plan(name=plan_name["name"], namespace=plan_name["namespace"], client=ocp_client)
-            archive_plan(plan=plan)
+        # Create temporary session_store with filtered resources
+        filtered_session_store = {
+            **session_store,
+            "teardown": session_teardown_resources,
+        }
 
         leftovers = teardown_resources(
-            session_store=session_store,
+            session_store=filtered_session_store,
             ocp_client=ocp_client,
             target_namespace=session_store.get("target_namespace"),
         )
         if leftovers:
             raise SessionTeardownError(f"Failed to clean up the following resources: {leftovers}")
+
+
+def test_teardown(session_store: dict[str, Any], test_name: str) -> None:
+    """Clean up test-scoped resources after a test completes.
+
+    Args:
+        session_store (dict[str, Any]): The session fixture store containing all tracked resources
+        test_name (str): The name/nodeid of the test that just completed
+
+    Raises:
+        Any exceptions from resource cleanup are logged but not re-raised
+    """
+    LOGGER.info(f"Running test teardown for: {test_name}")
+    ocp_client = get_cluster_client()
+
+    teardown_resources_dict = session_store.get("teardown", {})
+
+    test_scoped_resources = {}
+    for kind, resources in teardown_resources_dict.items():
+        test_resources = [r for r in resources if r.get("scope", "session") == "test"]
+        if test_resources:
+            test_scoped_resources[kind] = test_resources
+
+    if not test_scoped_resources:
+        LOGGER.info("No test-scoped resources to clean up")
+        return
+
+    test_session_store = {
+        "teardown": test_scoped_resources,
+        "session_uuid": session_store.get("session_uuid"),
+        "source_provider_data": session_store.get("source_provider_data"),
+    }
+
+    leftovers = teardown_resources(
+        session_store=test_session_store,
+        ocp_client=ocp_client,
+        target_namespace=session_store.get("target_namespace"),
+    )
+
+    # Remove test-scoped resources from session store so they aren't processed again during session teardown
+    for kind in test_scoped_resources:
+        if kind in session_store["teardown"]:
+            session_store["teardown"][kind] = [
+                r for r in session_store["teardown"][kind] if r.get("scope", "session") != "test"
+            ]
+
+    if leftovers:
+        LOGGER.info(f"Some test-scoped resources did not delete immediately: {leftovers}")
+        LOGGER.info("These will be cleaned up during namespace deletion")
 
 
 def teardown_resources(
@@ -123,6 +192,14 @@ def teardown_resources(
     for plan in plans:
         try:
             plan_obj = Plan(name=plan["name"], namespace=plan["namespace"], client=ocp_client)
+
+            # Archive plan first - this triggers MTV cleanup and pod deletion
+            try:
+                archive_plan(plan_obj)
+            except Exception as archive_exc:
+                LOGGER.warning(f"Failed to archive plan {plan['name']}: {archive_exc}")
+                # Continue with deletion even if archiving fails
+
             if not plan_obj.clean_up(wait=True):
                 leftovers = append_leftovers(leftovers=leftovers, resource=plan_obj)
         except Exception as exc:

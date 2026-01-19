@@ -18,6 +18,7 @@ def create_and_store_resource(
     fixture_store: dict[str, Any],
     resource: type[Resource],
     test_name: str | None = None,
+    scope: str = "session",
     **kwargs: Any,
 ) -> Any:
     kwargs["client"] = client
@@ -57,7 +58,12 @@ def create_and_store_resource(
         _resource.wait()
 
     LOGGER.info(f"Storing {_resource.kind} {_resource.name} in fixture store")
-    _resource_dict = {"name": _resource.name, "namespace": _resource.namespace, "module": _resource.__module__}
+    _resource_dict = {
+        "name": _resource.name,
+        "namespace": _resource.namespace,
+        "module": _resource.__module__,
+        "scope": scope,
+    }
 
     if test_name:
         _resource_dict["test_name"] = test_name

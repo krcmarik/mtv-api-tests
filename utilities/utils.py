@@ -256,6 +256,7 @@ def create_source_provider(
             resource=Secret,
             client=admin_client,
             namespace=namespace,
+            scope="session",
             string_data=secret_string_data,
             label=metadata_labels,
         )
@@ -273,6 +274,7 @@ def create_source_provider(
         resource=Provider,
         client=admin_client,
         namespace=namespace,
+        scope="session",
         secret_name=source_provider_secret.name,
         secret_namespace=namespace,
         url=source_provider_data_copy["api_url"],
@@ -308,6 +310,7 @@ def create_source_cnv_vms(
                 name=f"{vm_dict['name']}{vm_name_suffix}",
                 namespace=namespace,
                 client=client,
+                scope="test",
                 instancetype_name="u1.small",
                 preference_name="rhel.9",
                 datasource_name="rhel9",

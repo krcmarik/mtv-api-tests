@@ -184,7 +184,7 @@ def run_migration(
         # Note: generateName is enabled by default, so Kubernetes adds random suffix automatically
         plan_kwargs["pvc_name_template"] = "pvc"
 
-    plan = create_and_store_resource(**plan_kwargs)
+    plan = create_and_store_resource(scope="test", **plan_kwargs)
 
     try:
         plan.wait_for_condition(condition=Plan.Condition.READY, status=Plan.Condition.Status.TRUE, timeout=360)
@@ -207,6 +207,7 @@ def run_migration(
     create_and_store_resource(
         client=ocp_admin_client,
         fixture_store=fixture_store,
+        scope="test",
         resource=Migration,
         namespace=target_namespace,
         plan_name=plan.name,
@@ -370,6 +371,7 @@ def get_storage_migration_map(
 
     storage_map = create_and_store_resource(
         fixture_store=fixture_store,
+        scope="test",
         resource=StorageMap,
         client=ocp_admin_client,
         namespace=target_namespace,
@@ -406,6 +408,7 @@ def get_network_migration_map(
     )
     network_map = create_and_store_resource(
         fixture_store=fixture_store,
+        scope="test",
         resource=NetworkMap,
         client=ocp_admin_client,
         namespace=target_namespace,

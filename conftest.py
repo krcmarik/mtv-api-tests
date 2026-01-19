@@ -52,6 +52,7 @@ from utilities.pytest_utils import (
     collect_created_resources,
     prepare_base_path,
     session_teardown,
+    test_teardown,
 )
 from utilities.resources import create_and_store_resource
 from utilities.utils import (
@@ -154,8 +155,29 @@ def pytest_runtest_call(item):
     BASIC_LOGGER.info(f"{separator(symbol_='-', val='CALL')}")
 
 
-def pytest_runtest_teardown(item):
+def pytest_runtest_teardown(item, nextitem):
+    """Run after each test to clean test-scoped resources.
+
+    Args:
+        item: The test item that just finished
+        nextitem: The next test item (or None if this was the last test)
+    """
     BASIC_LOGGER.info(f"{separator(symbol_='-', val='TEARDOWN')}")
+
+    # Check if --skip-teardown flag is set
+    skip_teardown = item.config.getoption("--skip-teardown", default=False)
+    if skip_teardown:
+        LOGGER.info("--skip-teardown enabled, skipping test cleanup")
+        return
+
+    try:
+        _session_store = get_fixture_store(item.session)
+        test_teardown(
+            session_store=_session_store,
+            test_name=item.nodeid,
+        )
+    except Exception as exp:
+        LOGGER.error(f"Test teardown failed: {exp}")
 
 
 def pytest_report_teststatus(report, config):
@@ -194,7 +216,10 @@ def pytest_sessionfinish(session, exitstatus):
     else:
         # TODO: Maybe we need to check session_teardown return and fail the run if any leftovers
         try:
-            session_teardown(session_store=_session_store)
+            session_teardown(
+                session_store=_session_store,
+                session_scoped_only=True,  # Only clean session-scoped resources
+            )
         except Exception as exp:
             LOGGER.error(f"the following resources was left after tests are finished: {exp}")
             if not session.config.getoption("skip_data_collector"):
@@ -331,6 +356,7 @@ def target_namespace(fixture_store, session_uuid, ocp_admin_client):
         client=ocp_admin_client,
         name=unique_namespace_name,
         label=label,
+        scope="session",
     )
     namespace.wait_for_status(status=namespace.Status.ACTIVE)
     yield namespace.name
@@ -459,6 +485,7 @@ def destination_provider(session_uuid, ocp_admin_client, target_namespace, fixtu
         resource=Provider,
         kind_dict=kind_dict,
         client=ocp_admin_client,
+        scope="session",
     )
 
     return OCPProvider(ocp_resource=provider, fixture_store=fixture_store)
@@ -566,6 +593,7 @@ def multus_network_name(
             namespace=target_namespace,
             config=config,
             name=nad_name,
+            scope="test",
         )
 
         created_nads.append(nad_name)
@@ -619,6 +647,7 @@ def destination_ocp_secret(fixture_store, ocp_admin_client, target_namespace):
         namespace=target_namespace,
         # API key format: 'Bearer sha256~<token>', split it to get token.
         string_data={"token": api_key.split()[-1], "insecureSkipVerify": "true"},
+        scope="session",
     )
     yield secret
 
@@ -635,6 +664,7 @@ def destination_ocp_provider(fixture_store, destination_ocp_secret, ocp_admin_cl
         secret_namespace=destination_ocp_secret.namespace,
         url=ocp_admin_client.configuration.host,
         provider_type=Provider.ProviderType.OPENSHIFT,
+        scope="session",
     )
     yield OCPProvider(ocp_resource=provider, fixture_store=fixture_store)
 
@@ -734,6 +764,7 @@ def plan(
             "name": vm_obj.name,
             "namespace": vm_obj.namespace,
             "module": vm_obj.__module__,
+            "scope": "test",
         })
 
     for pod in Pod.get(client=ocp_admin_client, namespace=target_namespace):
@@ -741,6 +772,7 @@ def plan(
             "name": pod.name,
             "namespace": pod.namespace,
             "module": pod.__module__,
+            "scope": "test",
         })
 
 
@@ -810,6 +842,7 @@ def source_vms_namespace(source_provider, fixture_store, ocp_admin_client, sessi
             client=ocp_admin_client,
             name=f"{session_uuid}-source-vms",
             label={"mutatevirtualmachines.kubemacpool.io": "ignore"},
+            scope="session",
         )
         return namespace.name
 
@@ -840,6 +873,7 @@ def source_vms_network(source_provider, source_vms_namespace, ocp_admin_client, 
             cni_type=bridge_type_and_name,
             namespace=source_vms_namespace,
             config=multus_cni_config,
+            scope="session",
         )
 
         return bridge_type_and_name
@@ -966,6 +1000,7 @@ def copyoffload_storage_secret(
         resource=Secret,
         namespace=target_namespace,
         string_data=secret_data,
+        scope="test",
     )
 
     LOGGER.info(f"✓ Copy-offload storage secret created: {storage_secret.name}")
