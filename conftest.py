@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
 import pickle
 import shutil
+from copy import deepcopy
 from pathlib import Path
 from shutil import rmtree
-from typing import Any
+from collections.abc import Generator
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import NotFoundError
+
+if TYPE_CHECKING:
+    from kubernetes.dynamic import DynamicClient
 from ocp_resources.forklift_controller import ForkliftController
 from ocp_resources.namespace import Namespace
 from ocp_resources.network_attachment_definition import NetworkAttachmentDefinition
@@ -55,14 +58,15 @@ from utilities.pytest_utils import (
     session_teardown,
 )
 from utilities.resources import create_and_store_resource
+from utilities.ssh_utils import SSHConnectionManager
 from utilities.utils import (
     create_source_cnv_vms,
     create_source_provider,
+    generate_class_hash_prefix,
     get_cluster_client,
     get_value_from_py_config,
 )
 from utilities.virtctl import download_virtctl_from_cluster
-from utilities.ssh_utils import SSHConnectionManager
 
 RESULTS_PATH = Path("./.xdist_results/")
 RESULTS_PATH.mkdir(exist_ok=True)
@@ -212,8 +216,23 @@ def pytest_collection_modifyitems(session, config, items):
 
     for item in items:
         item.name = f"{item.name}-{py_config.get('source_provider_type')}-{py_config.get('source_provider_version')}-{py_config.get('storage_class')}"
-        for _vm in py_config["tests_params"][item.originalname]["virtual_machines"]:
-            vms_for_current_session.add(_vm["name"])
+
+        # Get test config from parametrization or tests_params
+        test_config = None
+        if hasattr(item, "callspec"):
+            # Class-based tests use class_plan_config
+            test_config = item.callspec.params.get("class_plan_config")
+            if test_config is None:
+                # Function-based tests use plan
+                test_config = item.callspec.params.get("plan")
+
+        if test_config is None:
+            # Fallback to looking up by test name (for non-parametrized tests)
+            test_config = py_config["tests_params"].get(item.originalname)
+
+        if test_config and "virtual_machines" in test_config:
+            for _vm in test_config["virtual_machines"]:
+                vms_for_current_session.add(_vm["name"])
 
     _session_store["vms_for_current_session"] = vms_for_current_session
 
@@ -225,7 +244,8 @@ def pytest_exception_interact(node, call, report):
     if not node.session.config.getoption("skip_data_collector"):
         _session_store = get_fixture_store(node.session)
         _data_collector_path = Path(f"{node.session.config.getoption('data_collector_path')}/{node.name}")
-        test_name = node._pyfuncitem.name
+        # Handle both function-based tests and class-based tests
+        test_name = node._pyfuncitem.name if hasattr(node, "_pyfuncitem") else node.name
         plans = _session_store["teardown"].get("Plan", [])
         plan = [plan for plan in plans if plan["test_name"] == test_name]
         plan = plan[0] if plan else None
@@ -503,42 +523,46 @@ def source_provider(
     _source_provider.disconnect()
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="class")
 def multus_network_name(
-    fixture_store, target_namespace, ocp_admin_client, multus_cni_config, source_provider_inventory, request
-):
-    """
-    Create NADs based on network requirements with unique names per test.
-    Automatically detects number of networks and creates NADs with test-unique naming:
-    - cb-{4-char-hash}-1, cb-{4-char-hash}-2, etc. (e.g., "cb-a1b2-1" = 9 chars)
+    fixture_store: dict[str, Any],
+    target_namespace: str,
+    ocp_admin_client: DynamicClient,
+    multus_cni_config: str,
+    source_provider_inventory: ForkliftInventory,
+    class_plan_config: dict[str, Any],
+    request: pytest.FixtureRequest,
+) -> str:
+    """Create NADs based on network requirements with unique names per test class.
 
-    The unique test hash prevents conflicts when running tests in parallel.
+    Automatically detects number of networks and creates NADs with class-unique naming:
+    - cb-{6-char-hash}-1, cb-{6-char-hash}-2, etc. (e.g., "cb-a1b2c3-1" = 11 chars)
+
+    Uses SHA-256 (FIPS-compliant) instead of MD5 for hash generation.
+    The unique class hash prevents conflicts when running tests in parallel.
     Names are kept under 15 characters to comply with Linux bridge interface name limits.
+
+    Args:
+        fixture_store (dict[str, Any]): Fixture store for resource tracking
+        target_namespace (str): Target namespace for NADs
+        ocp_admin_client (DynamicClient): OpenShift client
+        multus_cni_config (str): Multus CNI configuration
+        source_provider_inventory (ForkliftInventory): Source provider inventory
+        class_plan_config (dict[str, Any]): Plan configuration from class parametrization
+        request (pytest.FixtureRequest): Pytest fixture request
+
+    Returns:
+        str: Base name for NAD generation (e.g., "cb-a1b2c3")
     """
-    # Validate test configuration structure
-    if not isinstance(request.param, dict):
-        raise TypeError(f"request.param must be dict, got {type(request.param)}")
+    hash_prefix = generate_class_hash_prefix(request.node.nodeid)
+    base_name = f"cb-{hash_prefix}"
 
-    test_config: dict[str, Any] = request.param
+    class_name = request.node.cls.__name__ if request.node.cls else request.node.name
+    LOGGER.info(f"Creating class-scoped NADs with base name: {base_name} (class: {class_name})")
 
-    if "virtual_machines" not in test_config:
-        raise KeyError("Test configuration missing required 'virtual_machines' key")
-
-    if not isinstance(test_config["virtual_machines"], list):
-        raise TypeError("test_config['virtual_machines'] must be list")
-
-    # Generate unique identifier based on test name to avoid conflicts in parallel execution
-    test_name = request.node.name
-    short_hash = hashlib.md5(test_name.encode()).hexdigest()[:4]
-    base_name = f"cb-{short_hash}"
-
-    LOGGER.info(f"Creating NADs with unique base name: {base_name} (test: {test_name})")
-
-    created_nads = []
-
-    # Get VM names from the test configuration (same way as plan fixture)
-    vms = [vm["name"] for vm in test_config["virtual_machines"]]
-    LOGGER.info(f"Found VMs from test config: {vms}")
+    # Get VM names from the class plan config
+    vms = [vm["name"] for vm in class_plan_config["virtual_machines"]]
+    LOGGER.info(f"Found VMs from class config: {vms}")
 
     # Get network count directly from source provider inventory
     networks = source_provider_inventory.vms_networks_mappings(vms=vms)
@@ -549,6 +573,7 @@ def multus_network_name(
     # Calculate how many multus NADs we need (all networks except the first one)
     multus_count = max(0, len(networks) - 1)  # First network goes to pod, rest to multus
 
+    created_nads = []
     # Create all required NADs with consistent naming
     for i in range(1, multus_count + 1):
         nad_name = f"{base_name}-{i}"
@@ -572,14 +597,14 @@ def multus_network_name(
         created_nads.append(nad_name)
         LOGGER.info(f"Created NAD: {nad_name} in namespace {target_namespace}")
 
-    LOGGER.info(f"Created {len(created_nads)} NADs for migration: {created_nads}")
+    LOGGER.info(f"Created {len(created_nads)} class-scoped NADs: {created_nads}")
 
     # Return the base name - consuming code will generate the same indexed names
     # This maintains the contract: fixture creates NADs, returns base name for generation
-    yield base_name
+    return base_name
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="class")
 def vm_ssh_connections(fixture_store, destination_provider, target_namespace, ocp_admin_client):
     """
     Fixture to manage SSH connections to migrated VMs using python-rrmngmnt.
@@ -640,21 +665,57 @@ def destination_ocp_provider(fixture_store, destination_ocp_secret, ocp_admin_cl
     yield OCPProvider(ocp_resource=provider, fixture_store=fixture_store)
 
 
-@pytest.fixture(scope="function")
-def plan(
-    fixture_store,
-    target_namespace,
-    ocp_admin_client,
-    source_provider,
-    source_provider_inventory,
-    request,
-    multus_network_name,
-    source_vms_namespace,
-    source_vms_network,
-):
-    plan: dict[str, Any] = request.param
+@pytest.fixture(scope="class")
+def class_plan_config(request: pytest.FixtureRequest) -> dict[str, Any]:
+    """Get plan configuration for class-based tests.
+
+    Args:
+        request (pytest.FixtureRequest): Pytest fixture request
+
+    Returns:
+        dict[str, Any]: Plan configuration from test parametrization
+    """
+    return request.param
+
+
+@pytest.fixture(scope="class")
+def prepared_plan(
+    request: pytest.FixtureRequest,
+    class_plan_config: dict[str, Any],
+    fixture_store: dict[str, Any],
+    source_provider: Any,
+    source_vms_namespace: str,
+    ocp_admin_client: DynamicClient,
+    multus_cni_config: str,
+    source_provider_inventory: ForkliftInventory,
+) -> Generator[dict[str, Any], None, None]:
+    """Prepare plan with cloned VMs for class-based tests.
+
+    This fixture handles VM cloning and name updates, similar to the
+    function-scoped `plan` fixture but at class scope. It prepares VMs
+    once per test class rather than once per test function.
+
+    Args:
+        request (pytest.FixtureRequest): Pytest fixture request
+        class_plan_config (dict[str, Any]): Plan configuration from parametrization
+        fixture_store (dict[str, Any]): Fixture store for resource tracking
+        source_provider: Source provider instance (VMWareProvider, OvirtProvider, etc.)
+        source_vms_namespace (str): Source VMs namespace
+        ocp_admin_client (DynamicClient): OpenShift client
+        multus_cni_config (str): Multus CNI configuration
+        source_provider_inventory (ForkliftInventory): Source provider inventory
+
+    Yields:
+        dict[str, Any]: Prepared plan with updated VM names
+    """
+
+    # Deep copy the plan config to avoid mutation
+    plan: dict[str, Any] = deepcopy(class_plan_config)
     virtual_machines: list[dict[str, Any]] = plan["virtual_machines"]
     warm_migration = plan.get("warm_migration", False)
+
+    # Initialize separate storage for source VM data (keeps virtual_machines clean for Plan CR serialization)
+    plan["source_vms_data"] = {}
 
     # Override VM names from provider config if specified
     if hasattr(source_provider, "copyoffload_config") and source_provider.copyoffload_config:
@@ -665,12 +726,30 @@ def plan(
                     LOGGER.info(f"Overriding VM name '{vm['name']}' with '{default_vm_override}' from provider config")
                     vm["name"] = default_vm_override
 
+    # OVA provider uses a fixed VM from the OVA file
+    if source_provider.type == Provider.ProviderType.OVA:
+        plan["virtual_machines"] = [{"name": "1nisim-rhel9-efi"}]
+
     if source_provider.type != Provider.ProviderType.OVA:
         openshift_source_provider: bool = source_provider.type == Provider.ProviderType.OPENSHIFT
 
         vm_name_suffix = get_vm_suffix(warm_migration=warm_migration)
 
         if openshift_source_provider:
+            # Generate unique network name for class-based tests
+            hash_prefix = generate_class_hash_prefix(request.node.nodeid)
+            multus_network_name = f"cb-{hash_prefix}"
+
+            # Create NAD for OpenShift source provider
+            create_and_store_resource(
+                fixture_store=fixture_store,
+                resource=NetworkAttachmentDefinition,
+                client=ocp_admin_client,
+                namespace=source_vms_namespace,
+                config=multus_cni_config,
+                name=multus_network_name,
+            )
+
             create_source_cnv_vms(
                 fixture_store=fixture_store,
                 client=ocp_admin_client,
@@ -679,6 +758,7 @@ def plan(
                 network_name=multus_network_name,
                 vm_name_suffix=vm_name_suffix,
             )
+
         for vm in virtual_machines:
             # Get VM object first (without full vm_dict analysis)
             # Add enable_ctk flag for warm migrations
@@ -722,29 +802,59 @@ def plan(
             provider_vm_api = source_vm_details["provider_vm_api"]
 
             vm["snapshots_before_migration"] = source_vm_details["snapshots_data"]
-            # Store complete source VM data for post-migration checks
-            vm["source_vm_data"] = source_vm_details
+            # Store complete source VM data separately (keeps virtual_machines clean for Plan CR serialization)
+            plan["source_vms_data"][vm["name"]] = source_vm_details
 
     yield plan
 
-    for vm in plan["virtual_machines"]:
+    # Note: VMs are cleaned up by cleanup_migrated_vms at class scope.
+    # Session-level registration is intentionally omitted to prevent double cleanup.
+    # The cleanup_migrated_vms fixture handles VM deletion, and any leftover resources
+    # (e.g., if cleanup_migrated_vms is not used) will be caught by namespace deletion.
+
+
+@pytest.fixture(scope="class")
+def cleanup_migrated_vms(
+    request: pytest.FixtureRequest,
+    ocp_admin_client: DynamicClient,
+    target_namespace: str,
+    prepared_plan: dict[str, Any],
+) -> Generator[None, None, None]:
+    """Cleanup migrated VMs after test class completes.
+
+    Teardown-only fixture that deletes VMs migrated during the test class.
+    Honors --skip-teardown flag. Session teardown handles any leftovers.
+
+    Args:
+        request: Pytest fixture request for accessing config options
+        ocp_admin_client: OpenShift client
+        target_namespace: Namespace where VMs were migrated
+        prepared_plan: Plan containing virtual_machines list
+
+    Yields:
+        None: Teardown-only fixture, no setup value
+
+    Raises:
+        Exception: If VM deletion fails
+    """
+    yield
+
+    if request.config.getoption("skip_teardown"):
+        LOGGER.info("Skipping VM cleanup due to --skip-teardown flag")
+        return
+
+    for vm in prepared_plan["virtual_machines"]:
+        vm_name = vm["name"]
         vm_obj = VirtualMachine(
             client=ocp_admin_client,
-            name=vm["name"],
+            name=vm_name,
             namespace=target_namespace,
         )
-        fixture_store["teardown"].setdefault(vm_obj.kind, []).append({
-            "name": vm_obj.name,
-            "namespace": vm_obj.namespace,
-            "module": vm_obj.__module__,
-        })
-
-    for pod in Pod.get(client=ocp_admin_client, namespace=target_namespace):
-        fixture_store["teardown"].setdefault(pod.kind, []).append({
-            "name": pod.name,
-            "namespace": pod.namespace,
-            "module": pod.__module__,
-        })
+        if vm_obj.exists:
+            LOGGER.info(f"Cleaning up migrated VM: {vm_name}")
+            vm_obj.clean_up()
+        else:
+            LOGGER.info(f"VM {vm_name} already deleted, skipping cleanup")
 
 
 @pytest.fixture(scope="session")
@@ -818,44 +928,13 @@ def source_vms_namespace(source_provider, fixture_store, ocp_admin_client, sessi
 
 
 @pytest.fixture(scope="session")
-def source_vms_network(source_provider, source_vms_namespace, ocp_admin_client, fixture_store, multus_cni_config):
-    if source_provider.type == Provider.ProviderType.OPENSHIFT:
-        ceph_virtualization_sc = StorageClass(
-            client=ocp_admin_client, name="ocs-storagecluster-ceph-rbd-virtualization", ensure_exists=True
-        )
-        ResourceEditor(
-            patches={
-                ceph_virtualization_sc: {
-                    "metadata": {
-                        "annotations": {StorageClass.Annotations.IS_DEFAULT_VIRT_CLASS: "true"},
-                        "name": ceph_virtualization_sc.name,
-                    }
-                }
-            }
-        ).update()
-
-        bridge_type_and_name = "cnv-bridge"
-
-        create_and_store_resource(
-            fixture_store=fixture_store,
-            resource=NetworkAttachmentDefinition,
-            client=ocp_admin_client,
-            cni_type=bridge_type_and_name,
-            namespace=source_vms_namespace,
-            config=multus_cni_config,
-        )
-
-        return bridge_type_and_name
-
-
-@pytest.fixture(scope="session")
 def multus_cni_config() -> str:
     bridge_type_and_name = "cnv-bridge"
     config = {"cniVersion": "0.3.1", "type": f"{bridge_type_and_name}", "bridge": f"{bridge_type_and_name}"}
     return json.dumps(config)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def copyoffload_config(source_provider, source_provider_data):
     """
     Validate copy-offload configuration before running copy-offload tests.
@@ -902,7 +981,7 @@ def copyoffload_config(source_provider, source_provider_data):
     LOGGER.info("✓ Copy-offload configuration validated successfully")
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def copyoffload_storage_secret(
     fixture_store,
     ocp_admin_client,
@@ -1018,7 +1097,7 @@ def copyoffload_storage_secret(
     return storage_secret
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def setup_copyoffload_ssh(source_provider, source_provider_data, copyoffload_config):
     """
     Sets up SSH key on ESXi host for copy-offload if SSH method is enabled.

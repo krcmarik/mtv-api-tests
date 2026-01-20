@@ -1,5 +1,6 @@
 import copy
 import functools
+import hashlib
 import multiprocessing
 import os
 from collections.abc import Generator
@@ -33,6 +34,19 @@ from libs.providers.vmware import VMWareProvider
 from utilities.resources import create_and_store_resource
 
 LOGGER = get_logger(__name__)
+
+
+def generate_class_hash_prefix(nodeid: str, length: int = 6) -> str:
+    """Generate a FIPS-compliant hash prefix for class-based resource naming.
+
+    Args:
+        nodeid (str): The pytest node ID (e.g., request.node.nodeid).
+        length (int): Length of the hash prefix (default: 6).
+
+    Returns:
+        str: A hex prefix of the specified length (e.g., "a1b2c3").
+    """
+    return hashlib.sha256(nodeid.encode()).hexdigest()[:length]
 
 
 def vmware_provider(provider_data: dict[str, Any]) -> bool:
@@ -519,6 +533,14 @@ class VirtualMachineFromInstanceType(VirtualMachine):
 
 
 def get_cluster_client() -> DynamicClient:
+    """Get a DynamicClient for the cluster.
+
+    Returns:
+        DynamicClient: The cluster client.
+
+    Raises:
+        ValueError: If the client cannot be created.
+    """
     host = get_value_from_py_config("cluster_host")
     username = get_value_from_py_config("cluster_username")
     password = get_value_from_py_config("cluster_password")
@@ -528,3 +550,26 @@ def get_cluster_client() -> DynamicClient:
     if isinstance(_client, DynamicClient):
         return _client
     raise ValueError("Failed to get client for cluster")
+
+
+def populate_vm_ids(plan: dict[str, Any], inventory: ForkliftInventory) -> None:
+    """Populate VM IDs from Forklift inventory into the plan's virtual machines.
+
+    Args:
+        plan (dict[str, Any]): The migration plan containing virtual_machines list.
+        inventory (ForkliftInventory): The Forklift inventory to query for VM IDs.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If the plan is malformed (not a dict or missing 'virtual_machines' list),
+            or if inventory.get_vm raises ValueError when a VM is not found.
+    """
+    if not isinstance(plan, dict) or not isinstance(plan.get("virtual_machines"), list):
+        raise ValueError("plan must contain 'virtual_machines' list")
+
+    for vm in plan["virtual_machines"]:
+        vm_name = vm["name"]
+        vm_data = inventory.get_vm(vm_name)
+        vm["id"] = vm_data["id"]
