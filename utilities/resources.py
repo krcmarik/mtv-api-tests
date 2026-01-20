@@ -96,7 +96,7 @@ def create_and_store_resource(
 
             # Resource was cleaned up by context manager __exit__
             # Remove from tracking if teardown was enabled (resource was deleted)
-            if kwargs.get("teardown", True):  # teardown=True means resource was deleted
+            if not skip_teardown:  # Resource was deleted, remove from tracking
                 try:
                     fixture_store["teardown"][deployed.kind].remove(_resource_dict)
                     LOGGER.debug(

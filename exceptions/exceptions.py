@@ -52,3 +52,7 @@ class MissingProvidersFileError(Exception):
 
 class VmCloneError(Exception):
     pass
+
+
+class SecretCreationError(ValueError):
+    """Raised when source provider secret creation fails."""

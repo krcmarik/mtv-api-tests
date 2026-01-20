@@ -23,6 +23,7 @@ from ocp_resources.virtual_machine_cluster_preference import VirtualMachineClust
 from pytest_testconfig import config as py_config
 from simple_logger.logger import get_logger
 
+from exceptions.exceptions import SecretCreationError
 from libs.base_provider import BaseProvider
 from libs.forklift_inventory import ForkliftInventory
 from libs.providers.openshift import OCPProvider
@@ -265,7 +266,7 @@ def create_source_provider(
             label=metadata_labels,
         ) as source_provider_secret:
             if not source_provider_secret:
-                raise ValueError("Failed to create source provider secret")
+                raise SecretCreationError("Failed to create source provider secret")
 
             with create_and_store_resource(
                 fixture_store=fixture_store,
