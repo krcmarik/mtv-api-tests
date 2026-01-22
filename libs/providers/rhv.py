@@ -298,7 +298,7 @@ class OvirtProvider(BaseProvider):
         LOGGER.info(f"Attempting to delete VM '{vm_name}'")
         try:
             vm = self.get_vm_by_name(query=vm_name)
-        except IndexError:
+        except VmNotFoundError:
             LOGGER.warning(f"VM '{vm_name}' not found. Nothing to delete.")
             return
 
