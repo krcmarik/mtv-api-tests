@@ -319,6 +319,22 @@ tests_params: dict = {
             }
         },
     },
+    "test_pre_hook_succeed_post_hook_fail": {
+        "virtual_machines": [
+            {
+                "name": "mtv-tests-rhel8",
+                "source_vm_power": "off",
+            },
+        ],
+        "warm_migration": False,
+        "pre_hook": {
+            "expected_result": "succeed",
+        },
+        "post_hook": {
+            "expected_result": "fail",
+        },
+        "expected_migration_result": "fail",
+    },
     "test_copyoffload_mixed_datastore_migration": {
         "virtual_machines": [
             {
