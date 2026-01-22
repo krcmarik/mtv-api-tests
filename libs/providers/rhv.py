@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import copy
 import os
-from typing import TYPE_CHECKING, Any, Callable, Self
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Self
 
 import ovirtsdk4
 from ocp_resources.provider import Provider
@@ -12,7 +13,7 @@ from ovirtsdk4.types import VmStatus
 from simple_logger.logger import get_logger
 from timeout_sampler import TimeoutExpiredError, TimeoutSampler
 
-from exceptions.exceptions import OvirtMTVDatacenterNotFoundError, OvirtMTVDatacenterStatusError
+from exceptions.exceptions import OvirtMTVDatacenterNotFoundError, OvirtMTVDatacenterStatusError, VmNotFoundError
 from libs.base_provider import BaseProvider
 from utilities.naming import generate_name_with_uuid
 
@@ -112,7 +113,7 @@ class OvirtProvider(BaseProvider):
         vm_name_suffix: str = "",
         clone_vm: bool = False,
         session_uuid: str = "",
-        clone_options: dict | None = None,
+        _clone_options: dict | None = None,
     ) -> types.Vm:
 
         target_vm_name = f"{query}{vm_name_suffix}"
@@ -128,7 +129,7 @@ class OvirtProvider(BaseProvider):
                     session_uuid=session_uuid,
                 )
             else:
-                raise
+                raise VmNotFoundError(f"VM '{target_vm_name}' not found on RHV host [{self.host}]") from None
 
     def vm_nics(self, vm: types.Vm) -> list[Any]:
         return [self.api.follow_link(nic) for nic in self.vms_services.vm_service(id=vm.id).nics_service().list()]
@@ -183,7 +184,7 @@ class OvirtProvider(BaseProvider):
                 vm_name_suffix=kwargs.get("vm_name_suffix", ""),
                 clone_vm=kwargs.get("clone", False),
                 session_uuid=kwargs.get("session_uuid", ""),
-                clone_options=kwargs.get("clone_options"),
+                _clone_options=kwargs.get("clone_options"),
             )
 
         result_vm_info = copy.deepcopy(self.VIRTUAL_MACHINE_TEMPLATE)

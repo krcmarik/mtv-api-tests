@@ -119,8 +119,5 @@ class BaseProvider(abc.ABC):
 
         Returns:
             List of network mappings in format [{"name": "network1"}, ...]
-
-        Raises:
-            ValueError: If no networks found
         """
         pass
