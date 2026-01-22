@@ -113,7 +113,7 @@ class OvirtProvider(BaseProvider):
         vm_name_suffix: str = "",
         clone_vm: bool = False,
         session_uuid: str = "",
-        _clone_options: dict | None = None,
+        clone_options: dict | None = None,
     ) -> types.Vm:
 
         target_vm_name = f"{query}{vm_name_suffix}"
@@ -127,6 +127,7 @@ class OvirtProvider(BaseProvider):
                     source_vm_name=query,
                     clone_vm_name=target_vm_name,
                     session_uuid=session_uuid,
+                    **(clone_options or {}),
                 )
             else:
                 raise VmNotFoundError(f"VM '{target_vm_name}' not found on RHV host [{self.host}]") from None
@@ -184,7 +185,7 @@ class OvirtProvider(BaseProvider):
                 vm_name_suffix=kwargs.get("vm_name_suffix", ""),
                 clone_vm=kwargs.get("clone", False),
                 session_uuid=kwargs.get("session_uuid", ""),
-                _clone_options=kwargs.get("clone_options"),
+                clone_options=kwargs.get("clone_options"),
             )
 
         result_vm_info = copy.deepcopy(self.VIRTUAL_MACHINE_TEMPLATE)
