@@ -44,6 +44,9 @@ def create_plan_resource(
     preserve_static_ips: bool = False,
     pvc_name_template: str | None = None,
     pvc_name_template_use_generate_name: bool | None = None,
+    target_node_selector: dict[str, str] | None = None,
+    target_labels: dict[str, str] | None = None,
+    target_affinity: dict[str, Any] | None = None,
 ) -> Plan:
     """Create MTV Plan CR resource.
 
@@ -70,6 +73,9 @@ def create_plan_resource(
         preserve_static_ips (bool): Preserve static IP addresses. Defaults to False.
         pvc_name_template (str | None): PVC naming template. Defaults to None.
         pvc_name_template_use_generate_name (bool | None): Use generateName for PVCs. Defaults to None.
+        target_node_selector (dict[str, str] | None): Optional node selector labels for scheduling VMs to specific nodes. Defaults to None.
+        target_labels (dict[str, str] | None): Optional custom labels to apply to migrated VM metadata. Defaults to None.
+        target_affinity (dict[str, Any] | None): Optional Kubernetes pod affinity/anti-affinity configuration. Defaults to None.
 
     Returns:
         Plan: The created Plan CR resource.
@@ -111,6 +117,15 @@ def create_plan_resource(
 
     if test_name:
         plan_kwargs["test_name"] = test_name
+
+    if target_node_selector:
+        plan_kwargs["target_node_selector"] = target_node_selector
+
+    if target_labels:
+        plan_kwargs["target_labels"] = target_labels
+
+    if target_affinity:
+        plan_kwargs["target_affinity"] = target_affinity
 
     # Add copy-offload specific parameters if enabled
     if copyoffload:
