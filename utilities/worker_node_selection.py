@@ -3,12 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ocp_resources.node import Node
-from ocp_utilities.monitoring import Prometheus
 from pytest_testconfig import config as py_config
 from simple_logger.logger import get_logger
 
 if TYPE_CHECKING:
     from kubernetes.dynamic import DynamicClient
+    from ocp_utilities.monitoring import Prometheus
 
 LOGGER = get_logger(__name__)
 
@@ -21,6 +21,9 @@ def get_worker_nodes(ocp_client: DynamicClient) -> list[str]:
 
     Returns:
         list[str]: List of worker node names.
+
+    Raises:
+        Exception: If Node.get() encounters client or API errors from OpenShift DynamicClient.
     """
     return [
         node.name
@@ -39,6 +42,9 @@ def _query_prometheus_safe(prometheus: Prometheus, query: str, metric_name: str)
 
     Returns:
         list[dict[str, Any]]: Query results or empty list on failure.
+
+    Raises:
+        None: Exceptions are caught internally and empty list is returned.
     """
     try:
         response = prometheus.query(query=query)
@@ -56,6 +62,9 @@ def parse_prometheus_value(raw_value: object) -> int:
 
     Returns:
         int: Parsed integer value, or 0 if parsing fails.
+
+    Raises:
+        None: Parsing errors are caught internally and 0 is returned.
     """
     if (
         isinstance(raw_value, (list, tuple))
@@ -79,6 +88,9 @@ def parse_prometheus_memory_metrics(worker_nodes: list[str], prometheus: Prometh
     Returns:
         dict[str, dict[str, int]]: Dictionary mapping node names to memory metrics (allocatable, requested, available).
             Returns empty dict if query fails or no metrics available.
+
+    Raises:
+        None: Does not raise exceptions; query errors are handled internally by _query_prometheus_safe.
     """
     worker_nodes_set = set(worker_nodes)
     allocatable_query = 'kube_node_status_allocatable{resource="memory"}'
@@ -139,6 +151,40 @@ def _get_node_with_most_memory(metrics: dict[str, dict[str, int]]) -> str:
     return nodes_with_max[0]
 
 
+def _create_prometheus_client(ocp_admin_client: DynamicClient) -> Prometheus | None:
+    """Create and initialize Prometheus client for metrics queries.
+
+    Args:
+        ocp_admin_client (DynamicClient): OpenShift admin DynamicClient with cluster access.
+
+    Returns:
+        Prometheus | None: Initialized Prometheus client, or None if initialization fails.
+    """
+    from ocp_utilities.monitoring import Prometheus  # noqa: PLC0415
+
+    # Auth header format: "Bearer <token>" - extract just the token part
+    auth_header = ocp_admin_client.configuration.api_key.get("authorization", "")
+    token_parts = auth_header.split()
+    token = token_parts[-1] if token_parts else ""
+    if not token:
+        LOGGER.warning("No auth token available, cannot create Prometheus client")
+        return None
+
+    verify_ssl = py_config["insecure_verify_skip"].lower() != "true"
+
+    try:
+        return Prometheus(
+            bearer_token=token,
+            namespace="openshift-monitoring",
+            resource_name="thanos-querier",
+            client=ocp_admin_client,
+            verify_ssl=verify_ssl,
+        )
+    except Exception as e:
+        LOGGER.warning("Failed to initialize Prometheus client: %s", e)
+        return None
+
+
 def select_node_by_available_memory(
     ocp_admin_client: DynamicClient,
     worker_nodes: list[str],
@@ -152,32 +198,12 @@ def select_node_by_available_memory(
     Returns:
         str: Name of the selected worker node.
 
-    Raises:
-        ValueError: If worker_nodes list is empty
-
     Note:
         Falls back to first node if auth token, Prometheus client, or memory metrics are unavailable.
     """
-    # Auth header format: "Bearer <token>" - extract just the token part
-    auth_header = ocp_admin_client.configuration.api_key.get("authorization", "")
-    token_parts = auth_header.split()
-    token = token_parts[-1] if token_parts else ""
-    if not token:
-        LOGGER.warning("No auth token available, selecting first worker node")
-        return worker_nodes[0]
-
-    verify_ssl = py_config["insecure_verify_skip"].lower() != "true"
-
-    try:
-        prometheus = Prometheus(
-            bearer_token=token,
-            namespace="openshift-monitoring",
-            resource_name="thanos-querier",
-            client=ocp_admin_client,
-            verify_ssl=verify_ssl,
-        )
-    except Exception as e:
-        LOGGER.warning("Failed to initialize Prometheus client: %s, selecting first worker node", e)
+    prometheus = _create_prometheus_client(ocp_admin_client)
+    if not prometheus:
+        LOGGER.warning("Prometheus client unavailable, selecting first worker node")
         return worker_nodes[0]
 
     metrics = parse_prometheus_memory_metrics(worker_nodes, prometheus)
