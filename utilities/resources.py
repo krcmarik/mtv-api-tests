@@ -1,20 +1,23 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
-from kubernetes.dynamic import DynamicClient
 from kubernetes.dynamic.exceptions import ConflictError
 from ocp_resources.migration import Migration
+from ocp_resources.namespace import Namespace
 from ocp_resources.plan import Plan
 from ocp_resources.resource import Resource
 from simple_logger.logger import get_logger
 
 from utilities.naming import generate_name_with_uuid
 
+if TYPE_CHECKING:
+    from kubernetes.dynamic import DynamicClient
+
 LOGGER = get_logger(__name__)
 
 
 def create_and_store_resource(
-    client: DynamicClient,
+    client: "DynamicClient",
     fixture_store: dict[str, Any],
     resource: type[Resource],
     test_name: str | None = None,
@@ -65,3 +68,41 @@ def create_and_store_resource(
     fixture_store["teardown"].setdefault(_resource.kind, []).append(_resource_dict)
 
     return _resource
+
+
+def get_or_create_namespace(
+    fixture_store: dict[str, Any],
+    ocp_admin_client: "DynamicClient",
+    namespace_name: str,
+) -> str:
+    """Get or create a namespace, ensuring it exists and is active.
+
+    Checks if namespace exists. If not, creates it with standard labels.
+    Only adds to fixture_store teardown if creating new namespace (not if reusing existing).
+
+    Args:
+        fixture_store: Fixture store for resource tracking
+        ocp_admin_client: OpenShift client
+        namespace_name: Name of the namespace
+
+    Returns:
+        str: The namespace name
+    """
+    ns = Namespace(name=namespace_name, client=ocp_admin_client)
+    if ns.exists:
+        LOGGER.info(f"Namespace {namespace_name} already exists, using it")
+    else:
+        LOGGER.info(f"Creating namespace {namespace_name}")
+        ns = create_and_store_resource(
+            fixture_store=fixture_store,
+            resource=Namespace,
+            client=ocp_admin_client,
+            name=namespace_name,
+            label={
+                "pod-security.kubernetes.io/enforce": "restricted",
+                "pod-security.kubernetes.io/enforce-version": "latest",
+                "mutatevirtualmachines.kubemacpool.io": "ignore",
+            },
+        )
+    ns.wait_for_status(status=ns.Status.ACTIVE)
+    return namespace_name

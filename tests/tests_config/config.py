@@ -288,6 +288,18 @@ tests_params: dict = {
         "warm_migration": False,
         "copyoffload": True,
     },
+    "test_custom_nad_vm_namespace": {
+        "virtual_machines": [
+            {
+                "name": "mtv-tests-rhel8",
+                "source_vm_power": "on",
+                "guest_agent": True,
+            },
+        ],
+        "warm_migration": False,
+        "vm_target_namespace": "custom-vm-namespace",
+        "multus_namespace": "default",
+    },
 }
 
 for _dir in dir():

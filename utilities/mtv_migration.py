@@ -44,6 +44,7 @@ def create_plan_resource(
     preserve_static_ips: bool = False,
     pvc_name_template: str | None = None,
     pvc_name_template_use_generate_name: bool | None = None,
+    vm_target_namespace: str | None = None,
 ) -> Plan:
     """Create MTV Plan CR resource.
 
@@ -70,6 +71,7 @@ def create_plan_resource(
         preserve_static_ips (bool): Preserve static IP addresses. Defaults to False.
         pvc_name_template (str | None): PVC naming template. Defaults to None.
         pvc_name_template_use_generate_name (bool | None): Use generateName for PVCs. Defaults to None.
+        vm_target_namespace (str | None): Custom target namespace for VMs. Defaults to None.
 
     Returns:
         Plan: The created Plan CR resource.
@@ -98,7 +100,7 @@ def create_plan_resource(
         "network_map_name": network_map.name,
         "network_map_namespace": network_map.namespace,
         "virtual_machines_list": virtual_machines_list,
-        "target_namespace": target_namespace,
+        "target_namespace": vm_target_namespace or target_namespace,
         "warm_migration": warm_migration,
         "pre_hook_name": pre_hook_name,
         "pre_hook_namespace": pre_hook_namespace,
@@ -341,7 +343,7 @@ def get_network_migration_map(
     fixture_store: dict[str, Any],
     source_provider: BaseProvider,
     destination_provider: BaseProvider,
-    multus_network_name: str,
+    multus_network_name: dict[str, str],
     ocp_admin_client: DynamicClient,
     target_namespace: str,
     source_provider_inventory: ForkliftInventory,
