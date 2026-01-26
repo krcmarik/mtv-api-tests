@@ -61,7 +61,7 @@ from utilities.pytest_utils import (
     prepare_base_path,
     session_teardown,
 )
-from utilities.resources import create_and_store_resource
+from utilities.resources import create_and_store_resource, get_or_create_namespace
 from utilities.ssh_utils import SSHConnectionManager
 from utilities.utils import (
     create_source_cnv_vms,
@@ -611,7 +611,7 @@ def multus_network_name(
     source_provider_inventory: ForkliftInventory,
     class_plan_config: dict[str, Any],
     request: pytest.FixtureRequest,
-) -> str:
+) -> dict[str, str]:
     """Create NADs based on network requirements with unique names per test class.
 
     Automatically detects number of networks and creates NADs with class-unique naming:
@@ -632,13 +632,25 @@ def multus_network_name(
         request (pytest.FixtureRequest): Pytest fixture request
 
     Returns:
-        str: Base name for NAD generation (e.g., "cb-a1b2c3")
+        dict[str, str]: Dictionary with "name" (base name) and "namespace" (NAD namespace)
     """
     hash_prefix = generate_class_hash_prefix(request.node.nodeid)
     base_name = f"cb-{hash_prefix}"
 
     class_name = request.node.cls.__name__ if request.node.cls else request.node.name
     LOGGER.info(f"Creating class-scoped NADs with base name: {base_name} (class: {class_name})")
+
+    # Check for custom multus namespace in plan config
+    multus_namespace = class_plan_config.get("multus_namespace")
+    if multus_namespace:
+        LOGGER.info(f"Using custom multus namespace: {multus_namespace}")
+        nad_namespace = get_or_create_namespace(
+            fixture_store=fixture_store,
+            ocp_admin_client=ocp_admin_client,
+            namespace_name=multus_namespace,
+        )
+    else:
+        nad_namespace = target_namespace
 
     # Get VM/template names from the class plan config
     vms = [vm["name"] for vm in class_plan_config["virtual_machines"]]
@@ -669,23 +681,22 @@ def multus_network_name(
             fixture_store=fixture_store,
             resource=NetworkAttachmentDefinition,
             client=ocp_admin_client,
-            namespace=target_namespace,
+            namespace=nad_namespace,
             config=config,
             name=nad_name,
         )
 
         created_nads.append(nad_name)
-        LOGGER.info(f"Created NAD: {nad_name} in namespace {target_namespace}")
+        LOGGER.info(f"Created NAD: {nad_name} in namespace {nad_namespace}")
 
     LOGGER.info(f"Created {len(created_nads)} class-scoped NADs: {created_nads}")
 
-    # Return the base name - consuming code will generate the same indexed names
-    # This maintains the contract: fixture creates NADs, returns base name for generation
-    return base_name
+    # Return dict with base name and namespace
+    return {"name": base_name, "namespace": nad_namespace}
 
 
 @pytest.fixture(scope="class")
-def vm_ssh_connections(fixture_store, destination_provider, target_namespace, ocp_admin_client):
+def vm_ssh_connections(fixture_store, destination_provider, prepared_plan, ocp_admin_client):
     """
     Fixture to manage SSH connections to migrated VMs using python-rrmngmnt.
 
@@ -699,9 +710,10 @@ def vm_ssh_connections(fixture_store, destination_provider, target_namespace, oc
                 host.fs.put("/local/file", "/remote/file")
                 host.package_management.install("htop")
     """
+    vm_namespace = prepared_plan["_vm_target_namespace"]
     manager = SSHConnectionManager(
         provider=destination_provider,
-        namespace=target_namespace,
+        namespace=vm_namespace,
         fixture_store=fixture_store,
         ocp_client=ocp_admin_client,
     )
@@ -785,6 +797,7 @@ def prepared_plan(
         ocp_admin_client (DynamicClient): OpenShift client
         multus_cni_config (str): Multus CNI configuration
         source_provider_inventory (ForkliftInventory): Source provider inventory
+        target_namespace (str): Default target namespace for VMs
 
     Yields:
         dict[str, Any]: Prepared plan with updated VM names
@@ -797,6 +810,19 @@ def prepared_plan(
 
     # Initialize separate storage for source VM data (keeps virtual_machines clean for Plan CR serialization)
     plan["source_vms_data"] = {}
+
+    # Handle custom VM target namespace
+    vm_target_namespace = plan.get("vm_target_namespace")
+    if vm_target_namespace:
+        LOGGER.info(f"Using custom VM target namespace: {vm_target_namespace}")
+        get_or_create_namespace(
+            fixture_store=fixture_store,
+            ocp_admin_client=ocp_admin_client,
+            namespace_name=vm_target_namespace,
+        )
+        plan["_vm_target_namespace"] = vm_target_namespace
+    else:
+        plan["_vm_target_namespace"] = target_namespace
 
     # Override VM names from provider config if specified
     if hasattr(source_provider, "copyoffload_config") and source_provider.copyoffload_config:
@@ -1046,18 +1072,21 @@ def cleanup_migrated_vms(
         LOGGER.info("Skipping VM cleanup due to --skip-teardown flag")
         return
 
+    # Use custom namespace if configured, otherwise fall back to target_namespace
+    vm_namespace = prepared_plan.get("_vm_target_namespace", target_namespace)
+
     for vm in prepared_plan["virtual_machines"]:
         vm_name = vm["name"]
         vm_obj = VirtualMachine(
             client=ocp_admin_client,
             name=vm_name,
-            namespace=target_namespace,
+            namespace=vm_namespace,
         )
         if vm_obj.exists:
-            LOGGER.info(f"Cleaning up migrated VM: {vm_name}")
+            LOGGER.info(f"Cleaning up migrated VM: {vm_name} from namespace: {vm_namespace}")
             vm_obj.clean_up()
         else:
-            LOGGER.info(f"VM {vm_name} already deleted, skipping cleanup")
+            LOGGER.info(f"VM {vm_name} already deleted from namespace: {vm_namespace}, skipping cleanup")
 
 
 @pytest.fixture(scope="session")

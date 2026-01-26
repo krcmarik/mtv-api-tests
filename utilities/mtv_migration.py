@@ -150,6 +150,7 @@ def create_plan_resource(
     target_node_selector: dict[str, str] | None = None,
     target_labels: dict[str, str] | None = None,
     target_affinity: dict[str, Any] | None = None,
+    vm_target_namespace: str | None = None,
 ) -> Plan:
     """Create MTV Plan CR resource.
 
@@ -179,6 +180,7 @@ def create_plan_resource(
         target_node_selector (dict[str, str] | None): Optional node selector labels for scheduling VMs to specific nodes. Defaults to None.
         target_labels (dict[str, str] | None): Optional custom labels to apply to migrated VM metadata. Defaults to None.
         target_affinity (dict[str, Any] | None): Optional Kubernetes pod affinity/anti-affinity configuration. Defaults to None.
+        vm_target_namespace (str | None): Custom target namespace for VMs. Defaults to None.
 
     Returns:
         Plan: The created Plan CR resource.
@@ -207,7 +209,7 @@ def create_plan_resource(
         "network_map_name": network_map.name,
         "network_map_namespace": network_map.namespace,
         "virtual_machines_list": virtual_machines_list,
-        "target_namespace": target_namespace,
+        "target_namespace": vm_target_namespace or target_namespace,
         "warm_migration": warm_migration,
         "pre_hook_name": pre_hook_name,
         "pre_hook_namespace": pre_hook_namespace,
@@ -482,7 +484,7 @@ def get_network_migration_map(
     fixture_store: dict[str, Any],
     source_provider: BaseProvider,
     destination_provider: BaseProvider,
-    multus_network_name: str,
+    multus_network_name: dict[str, str],
     ocp_admin_client: DynamicClient,
     target_namespace: str,
     source_provider_inventory: ForkliftInventory,

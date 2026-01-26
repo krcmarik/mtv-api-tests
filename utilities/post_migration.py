@@ -1097,7 +1097,6 @@ def check_vms(
     plan: dict[str, Any],
     source_provider: BaseProvider,
     destination_provider: BaseProvider,
-    destination_namespace: str,
     network_map_resource: NetworkMap,
     storage_map_resource: StorageMap,
     source_provider_data: dict[str, Any],
@@ -1113,6 +1112,9 @@ def check_vms(
     if source_provider.type == Provider.ProviderType.OVA:
         LOGGER.info("Source OVA VMS do not have any stats")
         return
+
+    # Use custom VM namespace (always set by prepared_plan fixture)
+    vm_namespace = plan["_vm_target_namespace"]
 
     # Verify SSL configuration matches the global setting (VMware, RHV, OpenStack)
     if source_provider.type in (
@@ -1138,7 +1140,7 @@ def check_vms(
         )
         vm_guest_agent = vm.get("guest_agent")
         destination_vm = destination_provider.vm_dict(
-            wait_for_guest_agent=vm_guest_agent, name=vm_name, namespace=destination_namespace
+            wait_for_guest_agent=vm_guest_agent, name=vm_name, namespace=vm_namespace
         )
 
         try:
