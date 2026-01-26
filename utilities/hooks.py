@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import base64
 import binascii
-import logging
 from typing import TYPE_CHECKING, Any
 
 import yaml
 from ocp_resources.hook import Hook
+from simple_logger.logger import get_logger
 
 from exceptions.exceptions import VmMigrationStepMismatchError
 from utilities.resources import create_and_store_resource
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from kubernetes.dynamic import DynamicClient
     from ocp_resources.plan import Plan
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger(__name__)
 
 # Predefined hook playbooks for testing (base64 encoded Ansible playbooks)
 #

@@ -162,8 +162,9 @@ class TestPreHookSucceedPostHookFail:
         vm_ssh_connections: "SSHConnectionManager | None",
     ) -> None:
         """Validate migrated VMs - PostHook fails after migration, so VMs should exist."""
+        # Runtime skip needed - decision based on previous test's migration execution result
         if not self.__class__.should_check_vms:
-            pytest.skip("Skipping VM checks due to expected Hook failure")
+            pytest.skip("Skipping VM checks - PreHook failure means VMs were not migrated")
 
         check_vms(
             plan=prepared_plan,
