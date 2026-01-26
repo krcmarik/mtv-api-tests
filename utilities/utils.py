@@ -596,3 +596,48 @@ def populate_vm_ids(plan: dict[str, Any], inventory: ForkliftInventory) -> None:
         vm_name = vm["name"]
         vm_data = inventory.get_vm(vm_name)
         vm["id"] = vm_data["id"]
+
+
+def get_mtv_version(client: DynamicClient) -> str:
+    """Get MTV operator version from ClusterServiceVersion.
+
+    Args:
+        client (DynamicClient): OpenShift client
+
+    Returns:
+        str: MTV version string (e.g., "2.10.0")
+
+    Raises:
+        ValueError: If MTV operator CSV not found
+    """
+    from ocp_resources.cluster_service_version import ClusterServiceVersion  # noqa: PLC0415
+
+    mtv_namespace = py_config["mtv_namespace"]
+
+    for csv in ClusterServiceVersion.get(client=client, namespace=mtv_namespace):
+        if csv.name.startswith("mtv-operator"):
+            return csv.instance.spec.version
+
+    raise ValueError(f"MTV operator ClusterServiceVersion not found in namespace '{mtv_namespace}'")
+
+
+def has_mtv_minimum_version(min_version: str, client: DynamicClient) -> bool:
+    """Check if MTV version meets minimum requirement.
+
+    Args:
+        min_version (str): Minimum required version (e.g., "2.10.0")
+        client (DynamicClient): OpenShift client
+
+    Returns:
+        bool: True if MTV version >= min_version
+
+    Raises:
+        Does not raise exceptions. All exceptions from client interaction or version parsing
+        are caught internally and result in a False return value with a warning log message.
+    """
+    try:
+        current_version = get_mtv_version(client=client)
+        return Version(current_version) >= Version(min_version)
+    except Exception as e:
+        LOGGER.warning(f"Failed to check MTV version: {e}")
+        return False
