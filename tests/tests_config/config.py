@@ -335,6 +335,18 @@ tests_params: dict = {
         },
         "expected_migration_result": "fail",
     },
+    "test_custom_nad_vm_namespace": {
+        "virtual_machines": [
+            {
+                "name": "mtv-tests-rhel8",
+                "source_vm_power": "on",
+                "guest_agent": True,
+            },
+        ],
+        "warm_migration": False,
+        "vm_target_namespace": "custom-vm-namespace",
+        "multus_namespace": "default",
+    },
     "test_copyoffload_mixed_datastore_migration": {
         "virtual_machines": [
             {
