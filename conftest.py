@@ -941,8 +941,7 @@ def labeled_worker_node(
         dict with keys: node_name, label_key, label_value
 
     Raises:
-        ValueError: If target_node_selector not in test config
-        pytest.fail: If no worker nodes found
+        ValueError: If target_node_selector not in test config or no worker nodes found
     """
     try:
         target_node_selector = prepared_plan["target_node_selector"]
@@ -953,6 +952,8 @@ def labeled_worker_node(
         ) from None
 
     worker_nodes = get_worker_nodes(ocp_admin_client)
+    if not worker_nodes:
+        raise ValueError("No worker nodes found in cluster")
 
     target_node = select_node_by_available_memory(ocp_admin_client, worker_nodes)
 
