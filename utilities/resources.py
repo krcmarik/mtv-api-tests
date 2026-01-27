@@ -87,6 +87,10 @@ def get_or_create_namespace(
 
     Returns:
         str: The namespace name
+
+    Raises:
+        ValueError: If both yaml_file and kind_dict are specified in create_and_store_resource
+        Exception: If namespace creation, deployment, or status check fails
     """
     ns = Namespace(name=namespace_name, client=ocp_admin_client)
     if ns.exists:
