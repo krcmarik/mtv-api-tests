@@ -81,9 +81,9 @@ def get_or_create_namespace(
     Only adds to fixture_store teardown if creating new namespace (not if reusing existing).
 
     Args:
-        fixture_store: Fixture store for resource tracking
-        ocp_admin_client: OpenShift client
-        namespace_name: Name of the namespace
+        fixture_store (dict[str, Any]): Fixture store for resource tracking
+        ocp_admin_client (DynamicClient): OpenShift client
+        namespace_name (str): Name of the namespace
 
     Returns:
         str: The namespace name
