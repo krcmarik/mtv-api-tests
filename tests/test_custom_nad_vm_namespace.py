@@ -120,7 +120,6 @@ class TestCustomNadVmNamespace:
         prepared_plan,
         source_provider,
         destination_provider,
-        target_namespace,
         source_provider_data,
         source_vms_namespace,
         source_provider_inventory,
