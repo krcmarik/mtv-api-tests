@@ -76,7 +76,7 @@ class TestPreHookSucceedPostHookFail:
         destination_provider: "OCPProvider",
         source_provider_inventory: "ForkliftInventory",
         target_namespace: str,
-        multus_network_name: str,
+        multus_network_name: dict[str, str],
     ) -> None:
         """Create NetworkMap resource for migration."""
         vms = [vm["name"] for vm in prepared_plan["virtual_machines"]]
@@ -170,7 +170,6 @@ class TestPreHookSucceedPostHookFail:
             plan=prepared_plan,
             source_provider=source_provider,
             destination_provider=destination_provider,
-            destination_namespace=target_namespace,
             network_map_resource=self.network_map,
             storage_map_resource=self.storage_map,
             source_provider_data=source_provider_data,
