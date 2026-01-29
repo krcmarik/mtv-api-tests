@@ -54,7 +54,7 @@ class TestCustomNadVmNamespace:
             source_provider_inventory=source_provider_inventory,
             vms=vms,
         )
-        assert self.storage_map
+        assert self.storage_map, "StorageMap creation failed"
 
     def test_create_networkmap(
         self,
@@ -79,7 +79,7 @@ class TestCustomNadVmNamespace:
             source_provider_inventory=source_provider_inventory,
             vms=vms,
         )
-        assert self.network_map
+        assert self.network_map, "NetworkMap creation failed"
 
     def test_create_plan(
         self,
@@ -104,7 +104,7 @@ class TestCustomNadVmNamespace:
             preserve_static_ips=prepared_plan.get("preserve_static_ips", False),
             vm_target_namespace=prepared_plan["_vm_target_namespace"],
         )
-        assert self.plan_resource
+        assert self.plan_resource, "Plan creation failed"
 
     def test_migrate_vms(self, fixture_store, ocp_admin_client, target_namespace):
         """Execute migration to custom VM namespace."""
