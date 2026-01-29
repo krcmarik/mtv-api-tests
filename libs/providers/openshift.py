@@ -8,7 +8,7 @@ import humanfriendly
 from kubernetes.client.exceptions import ApiException
 from ocp_resources.persistent_volume_claim import PersistentVolumeClaim
 from ocp_resources.provider import Provider
-from ocp_resources.resource import Resource
+from ocp_resources.resource import NotFoundError, Resource
 from ocp_resources.virtual_machine import VirtualMachine
 from simple_logger.logger import get_logger
 from timeout_sampler import TimeoutExpiredError, TimeoutSampler
@@ -178,11 +178,29 @@ class OCPProvider(BaseProvider):
         firmware_spec: dict[str, Any] | None = cnv_vm.instance.spec.template.spec.domain.get("firmware")
         result_vm_info["serial"] = firmware_spec.get("serial") if firmware_spec else None
 
+        # Extract template once to avoid duplicate attribute access
+        template = cnv_vm.instance.spec.template
+
+        # VM labels - from template.metadata.labels (VMI template)
+        template_metadata: dict[str, Any] = template.metadata if template else {}
+        result_vm_info["labels"] = template_metadata.get("labels", {})
+
+        # VM affinity - from template.spec.affinity (VMI template)
+        template_spec: dict[str, Any] = template.spec if template else {}
+        result_vm_info["affinity"] = template_spec.get("affinity", {})
+
         self.start_vm(cnv_vm)
         # True guest agent is reporting all ok
         result_vm_info["guest_agent_running"] = (
             self.wait_for_cnv_vm_guest_agent(vm_dict=result_vm_info) if wait_for_guest_agent else False
         )
+
+        # Node name - where the VM is scheduled (collected after VM start)
+        try:
+            result_vm_info["node_name"] = cnv_vm.vmi.instance.status.nodeName
+        except (AttributeError, NotFoundError):
+            LOGGER.debug("Could not retrieve node name for VM %s", cnv_vm_name)
+            result_vm_info["node_name"] = None
 
         for interface in cnv_vm.vmi.interfaces:
             matching_networks = [

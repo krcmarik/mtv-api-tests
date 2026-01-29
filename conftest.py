@@ -21,13 +21,14 @@ if TYPE_CHECKING:
 from ocp_resources.forklift_controller import ForkliftController
 from ocp_resources.namespace import Namespace
 from ocp_resources.network_attachment_definition import NetworkAttachmentDefinition
+from ocp_resources.node import Node
 from ocp_resources.pod import Pod
 from ocp_resources.provider import Provider
-from ocp_resources.resource import ResourceEditor
 from ocp_resources.secret import Secret
 from ocp_resources.storage_class import StorageClass
 from ocp_resources.storage_profile import StorageProfile
 from ocp_resources.virtual_machine import VirtualMachine
+from ocp_resources.resource import ResourceEditor
 from pytest_harvest import get_fixture_store
 from pytest_testconfig import config as py_config
 from timeout_sampler import TimeoutSampler
@@ -70,6 +71,7 @@ from utilities.utils import (
     get_cluster_version,
     get_value_from_py_config,
 )
+from utilities.worker_node_selection import get_worker_nodes, select_node_by_available_memory
 from utilities.virtctl import add_to_path, download_virtctl_from_cluster
 
 RESULTS_PATH = Path("./.xdist_results/")
@@ -894,6 +896,124 @@ def prepared_plan(
     # Session-level registration is intentionally omitted to prevent double cleanup.
     # The cleanup_migrated_vms fixture handles VM deletion, and any leftover resources
     # (e.g., if cleanup_migrated_vms is not used) will be caught by namespace deletion.
+
+
+@pytest.fixture(scope="class")
+def mtv_version_checker(request: pytest.FixtureRequest, ocp_admin_client: DynamicClient) -> None:
+    """Check if test requires minimum MTV version and skip if not met.
+
+    Args:
+        request: pytest request object containing test markers
+        ocp_admin_client: OpenShift DynamicClient for version queries
+
+    Usage:
+        @pytest.mark.usefixtures("mtv_version_checker")
+        @pytest.mark.min_mtv_version("2.10.0")
+        def test_something(...):
+            # Test runs only if MTV >= 2.10.0
+
+    Raises:
+        pytest.skip: If MTV version doesn't meet minimum
+
+    Returns:
+        None: This fixture performs validation only.
+    """
+    marker = request.node.get_closest_marker("min_mtv_version")
+    if marker:
+        min_version = marker.args[0]
+        from utilities.utils import has_mtv_minimum_version  # noqa: PLC0415
+
+        if not has_mtv_minimum_version(min_version, client=ocp_admin_client):
+            pytest.skip(f"Test requires MTV {min_version}+")
+
+
+@pytest.fixture(scope="class")
+def labeled_worker_node(
+    prepared_plan: dict[str, Any],
+    ocp_admin_client: DynamicClient,
+    fixture_store: dict[str, Any],
+) -> Generator[dict[str, str], None, None]:
+    """Label a worker node for target scheduling tests.
+
+    Uses Prometheus to select node with most available memory.
+    Applies label using ResourceEditor context manager for automatic cleanup.
+
+    Args:
+        prepared_plan: Test plan configuration containing target_node_selector
+        ocp_admin_client: OpenShift DynamicClient for node operations
+        fixture_store: Fixture store containing session_uuid
+
+    Returns:
+        dict with keys: node_name, label_key, label_value
+
+    Raises:
+        ValueError: If target_node_selector not in test config or no worker nodes found
+    """
+    try:
+        target_node_selector = prepared_plan["target_node_selector"]
+    except KeyError:
+        raise ValueError(
+            "target_node_selector not found in test configuration. "
+            "Add 'target_node_selector' to your test config in tests/tests_config/config.py"
+        ) from None
+
+    worker_nodes = get_worker_nodes(ocp_admin_client)
+    if not worker_nodes:
+        raise ValueError("No worker nodes found in cluster")
+
+    target_node = select_node_by_available_memory(ocp_admin_client, worker_nodes)
+
+    # Extract label key and configured value
+    label_key, config_value = next(iter(target_node_selector.items()))
+
+    # Use session_uuid if configured value is None (allows unique labeling)
+    label_value = fixture_store["session_uuid"] if config_value is None else config_value
+
+    LOGGER.info(f"Labeling node '{target_node}' with {label_key}={label_value} for target scheduling")
+
+    # Apply label with automatic cleanup via context manager
+    node = Node(client=ocp_admin_client, name=target_node)
+    with ResourceEditor(patches={node: {"metadata": {"labels": {label_key: label_value}}}}):
+        yield {
+            "node_name": target_node,
+            "label_key": label_key,
+            "label_value": label_value,
+        }
+
+
+@pytest.fixture(scope="class")
+def target_vm_labels(prepared_plan: dict[str, Any], fixture_store: dict[str, Any]) -> dict[str, Any]:
+    """Generate VM labels for targetLabels testing.
+
+    Supports auto-generation: if label value is None in config, replaces with session_uuid.
+
+    Args:
+        prepared_plan: Test plan configuration
+        fixture_store: Fixture store containing session_uuid
+
+    Returns:
+        dict with "vm_labels" key containing label dict
+
+    Raises:
+        ValueError: If target_labels not in test config
+    """
+    try:
+        target_labels = prepared_plan["target_labels"]
+    except KeyError:
+        raise ValueError(
+            "target_labels not found in test configuration. "
+            "Add 'target_labels' to your test config in tests/tests_config/config.py"
+        ) from None
+    session_uuid = fixture_store["session_uuid"]
+
+    vm_labels = {}
+    for label_key, config_value in target_labels.items():
+        # None means auto-generate using session_uuid, otherwise use provided value
+        label_value = session_uuid if config_value is None else config_value
+        vm_labels[label_key] = label_value
+
+    LOGGER.info(f"Generated VM labels: {vm_labels}")
+    return {"vm_labels": vm_labels}
 
 
 @pytest.fixture(scope="class")
