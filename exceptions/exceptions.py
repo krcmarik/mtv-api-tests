@@ -85,3 +85,7 @@ class VmMigrationStepMismatchError(Exception):
         self.plan_name = plan_name
         self.failed_steps = failed_steps
         super().__init__(f"VMs in plan '{plan_name}' failed at different steps: {failed_steps}")
+
+
+class InvalidVMNameError(Exception):
+    pass
