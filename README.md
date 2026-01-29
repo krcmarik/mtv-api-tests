@@ -467,6 +467,71 @@ For technical implementation details, see the
 
 ---
 
+## Target Scheduling Features (MTV 2.10.0+)
+
+Control where and how migrated VMs are scheduled in the target OpenShift cluster.
+
+### targetNodeSelector
+
+Schedule VMs to specific labeled nodes.
+
+```python
+"target_node_selector": {
+    "migration-workload": "true",
+    "test-id": None,  # Auto-generated
+}
+```
+
+### targetLabels
+
+Apply custom labels to migrated VMs.
+
+```python
+"target_labels": {
+    "app": "my-application",
+    "migrated-from": "vsphere",
+    "test-id": None,  # Auto-generated
+}
+```
+
+### targetAffinity
+
+Configure pod affinity/anti-affinity and node affinity rules.
+
+```python
+"target_affinity": {
+    "podAffinity": {
+        "preferredDuringSchedulingIgnoredDuringExecution": [{
+            "podAffinityTerm": {
+                "labelSelector": {"matchLabels": {"app": "database"}},
+                "topologyKey": "kubernetes.io/hostname"
+            },
+            "weight": 100
+        }]
+    },
+    "nodeAffinity": {
+        "requiredDuringSchedulingIgnoredDuringExecution": {
+            "nodeSelectorTerms": [{
+                "matchExpressions": [{
+                    "key": "node.kubernetes.io/instance-type",
+                    "operator": "In",
+                    "values": ["m5.2xlarge"]
+                }]
+            }]
+        }
+    }
+}
+```
+
+### Usage Notes
+
+**Version requirement:** MTV 2.10.0+. Mark tests with `@pytest.mark.min_mtv_version("2.10.0")` and `@pytest.mark.usefixtures("mtv_version_checker")`.
+
+**Auto-generation:** Setting a value to `None` replaces it with the session UUID (e.g., `"test-id": None` becomes
+`"test-id": "mtv-api-tests-abc123"`). This ensures uniqueness for parallel test execution and prevents conflicts.
+
+---
+
 ## Useful Test Options
 
 ### Debug and Troubleshooting Flags

@@ -924,6 +924,126 @@ def check_serial_preservation(
         LOGGER.info(f"Serial preserved correctly (OCP {ocp_version} < 4.20, plain UUID): {dest_serial}")
 
 
+def check_vm_node_placement(
+    destination_vm: dict[str, Any],
+    expected_node: str,
+) -> None:
+    """Verify VM is scheduled on the expected labeled node.
+
+    Args:
+        destination_vm: Destination VM information including node_name
+        expected_node: Expected node name where VM should be scheduled
+
+    Returns:
+        None: No return value; raises pytest.fail on validation errors
+
+    Raises:
+        pytest.fail: If VM not on expected node or no node assignment
+    """
+    vm_name = destination_vm.get("name")
+    actual_node = destination_vm.get("node_name")
+
+    if not actual_node:
+        pytest.fail(f"VM {vm_name} has no node assignment")
+
+    if actual_node != expected_node:
+        pytest.fail(f"VM {vm_name} not scheduled on expected node. Expected: {expected_node}, Got: {actual_node}")
+
+    LOGGER.info(f"VM {vm_name} correctly scheduled on node {actual_node}")
+
+
+def check_vm_labels(
+    destination_vm: dict[str, Any],
+    expected_labels: dict[str, str],
+) -> None:
+    """Verify VM has the expected labels set on its metadata.
+
+    Args:
+        destination_vm: Destination VM information including labels
+        expected_labels: Expected labels that should be set on the VM
+
+    Returns:
+        None: No return value; raises pytest.fail on validation errors
+
+    Raises:
+        pytest.fail: If labels don't match
+    """
+    from ocp_resources.resource import ResourceField  # noqa: PLC0415
+
+    vm_name = destination_vm.get("name")
+    actual_labels_raw: ResourceField | None = destination_vm.get("labels")
+
+    # Convert ResourceField to dict
+    # Kubernetes API returns ResourceField objects. Use .to_dict() for recursive conversion
+    # (handles nested ResourceField objects). The 'in' operator doesn't work on ResourceField.
+    actual_labels: dict[str, str] = actual_labels_raw.to_dict() if actual_labels_raw else {}
+
+    # Fail if VM has no labels but we expect some
+    if not actual_labels:
+        pytest.fail(f"VM {vm_name} has no labels but expected: {expected_labels}")
+
+    missing_labels = []
+    incorrect_labels = []
+
+    for label_key, expected_value in expected_labels.items():
+        if label_key not in actual_labels:
+            missing_labels.append(f"{label_key}=<missing>")
+        elif actual_labels[label_key] != expected_value:
+            incorrect_labels.append(f"{label_key}={actual_labels[label_key]} (expected: {expected_value})")
+
+    if missing_labels or incorrect_labels:
+        error_msg = f"VM {vm_name} label verification failed:\n"
+        if missing_labels:
+            error_msg += f"  Missing labels: {', '.join(missing_labels)}\n"
+        if incorrect_labels:
+            error_msg += f"  Incorrect labels: {', '.join(incorrect_labels)}\n"
+        error_msg += f"  Actual labels: {actual_labels}\n"
+        error_msg += f"  Expected labels: {expected_labels}"
+        pytest.fail(error_msg)
+
+    LOGGER.info(f"VM {vm_name} labels verified successfully: {actual_labels}")
+
+
+def check_vm_affinity(
+    destination_vm: dict[str, Any],
+    expected_affinity: dict[str, Any],
+) -> None:
+    """Check VM affinity matches expected configuration.
+
+    Args:
+        destination_vm: VM info dict from provider
+        expected_affinity: Expected affinity configuration dict
+
+    Returns:
+        None: No return value; raises pytest.fail on validation errors
+
+    Raises:
+        pytest.fail: If affinity doesn't match
+    """
+    from ocp_resources.resource import ResourceField  # noqa: PLC0415
+
+    vm_name = destination_vm.get("name")
+    actual_affinity_raw: ResourceField | None = destination_vm.get("affinity")
+
+    # Convert ResourceField to dict
+    # Kubernetes API returns nested ResourceField objects. Must use .to_dict() for recursive conversion.
+    # Using dict() only converts top level, leaving nested ResourceField objects that break comparison.
+    actual_affinity: dict[str, Any] = actual_affinity_raw.to_dict() if actual_affinity_raw else {}
+
+    if not actual_affinity:
+        pytest.fail(f"VM {vm_name} has no affinity configuration")
+
+    # Deep comparison of affinity configurations
+    if actual_affinity != expected_affinity:
+        pytest.fail(
+            f"VM {vm_name} affinity verification failed:\n"
+            f"  Expected affinity: {expected_affinity}\n"
+            f"  Actual affinity: {actual_affinity}"
+        )
+
+    LOGGER.info(f"VM {vm_name} affinity verified successfully: {actual_affinity}")
+
+
 def check_ssl_configuration(source_provider: BaseProvider) -> None:
     """
     Verify that Provider secret's insecureSkipVerify matches the global configuration.
@@ -984,6 +1104,8 @@ def check_vms(
     source_vms_namespace: str,
     source_provider_inventory: ForkliftInventory | None = None,
     vm_ssh_connections: SSHConnectionManager | None = None,
+    labeled_worker_node: dict[str, Any] | None = None,
+    target_vm_labels: dict[str, Any] | None = None,
 ) -> None:
     res: dict[str, list[str]] = {}
     should_fail: bool = False
@@ -1135,6 +1257,36 @@ def check_vms(
                 f"Skipping SSH connectivity check for VM {vm_name} - destination VM is not powered on "
                 f"(power_state: {destination_vm.get('power_state', 'unknown')})"
             )
+
+        # Check node placement if configured
+        if plan.get("target_node_selector") and labeled_worker_node:
+            try:
+                check_vm_node_placement(
+                    destination_vm=destination_vm,
+                    expected_node=labeled_worker_node["node_name"],
+                )
+            except Exception as exp:
+                res[vm_name].append(f"check_vm_node_placement - {str(exp)}")
+
+        # Check VM labels if configured
+        if plan.get("target_labels") and target_vm_labels:
+            try:
+                check_vm_labels(
+                    destination_vm=destination_vm,
+                    expected_labels=target_vm_labels["vm_labels"],
+                )
+            except Exception as exp:
+                res[vm_name].append(f"check_vm_labels - {str(exp)}")
+
+        # Check affinity if configured
+        if plan.get("target_affinity"):
+            try:
+                check_vm_affinity(
+                    destination_vm=destination_vm,
+                    expected_affinity=plan["target_affinity"],
+                )
+            except Exception as exp:
+                res[vm_name].append(f"check_vm_affinity - {str(exp)}")
 
         if rhv_provider(source_provider_data) and isinstance(source_provider, OvirtProvider):
             try:
