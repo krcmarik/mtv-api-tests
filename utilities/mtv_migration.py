@@ -151,6 +151,7 @@ def create_plan_resource(
     target_labels: dict[str, str] | None = None,
     target_affinity: dict[str, Any] | None = None,
     vm_target_namespace: str | None = None,
+    target_power_state: str | None = None,
 ) -> Plan:
     """Create MTV Plan CR resource.
 
@@ -181,6 +182,7 @@ def create_plan_resource(
         target_labels (dict[str, str] | None): Optional custom labels to apply to migrated VM metadata. Defaults to None.
         target_affinity (dict[str, Any] | None): Optional Kubernetes pod affinity/anti-affinity configuration. Defaults to None.
         vm_target_namespace (str | None): Custom target namespace for VMs. Defaults to None.
+        target_power_state (str | None): Target power state for VMs after migration (e.g., 'on', 'off'). Defaults to None.
 
     Returns:
         Plan: The created Plan CR resource.
@@ -218,6 +220,7 @@ def create_plan_resource(
         "preserve_static_ips": preserve_static_ips,
         "pvc_name_template": pvc_name_template,
         "pvc_name_template_use_generate_name": pvc_name_template_use_generate_name,
+        "target_power_state": target_power_state,
     }
 
     if test_name:

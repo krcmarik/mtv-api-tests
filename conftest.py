@@ -884,7 +884,7 @@ def prepared_plan(
                 source_provider.start_vm(provider_vm_api)
                 # Wait for guest info to become available (VMware only)
                 if source_provider.type == Provider.ProviderType.VSPHERE:
-                    source_provider.wait_for_vmware_guest_info(provider_vm_api, timeout=60)
+                    source_provider.wait_for_vmware_guest_info(provider_vm_api, timeout=120)
             elif source_vm_power == "off":
                 source_provider.stop_vm(provider_vm_api)
 

@@ -21,7 +21,7 @@ from utilities.post_migration import check_vms
 )
 @pytest.mark.usefixtures("cleanup_migrated_vms")
 @pytest.mark.incremental
-@pytest.mark.tier1
+@pytest.mark.tier0
 class TestCustomNadVmNamespace:
     """Test migration with custom NAD and VM target namespaces.
 

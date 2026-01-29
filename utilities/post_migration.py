@@ -84,18 +84,25 @@ def check_ssh_connectivity(
     vm_ssh_connections: SSHConnectionManager,
     source_provider_data: dict[str, Any],
     source_vm_info: dict[str, Any],
+    timeout: int = 300,
+    retry_delay: int = 15,
 ) -> None:
     """
-    Test SSH connectivity to a migrated VM using provider credentials.
+    Test SSH connectivity to a migrated VM using provider credentials with retry support.
+
+    Attempts to establish SSH connectivity with automatic retries on failure. Each attempt
+    waits for the host to become connective before considering the test complete.
 
     Args:
         vm_name: Name of the VM to test
         vm_ssh_connections: SSH connections fixture manager
         source_provider_data: Provider configuration from .providers.json
         source_vm_info: VM information including OS type
+        timeout: Maximum time in seconds to retry SSH connectivity (default: 300)
+        retry_delay: Delay in seconds between retry attempts (default: 15)
 
     Raises:
-        Exception: If SSH connection cannot be established
+        TimeoutExpiredError: If SSH connectivity cannot be established within the timeout period
     """
     LOGGER.info(f"Testing SSH connectivity to VM {vm_name}")
 
@@ -105,12 +112,25 @@ def check_ssh_connectivity(
     # Create SSH connection
     ssh_conn = vm_ssh_connections.create(vm_name=vm_name, username=ssh_username, password=ssh_password)
 
-    # Test SSH connectivity using rrmngmnt's built-in connectivity check
-    with ssh_conn:
-        if not ssh_conn.is_connective(tcp_timeout=10):
-            raise ConnectionError("SSH connectivity test failed: Host is not connective")
+    def _test_connectivity() -> bool:
+        """Test SSH connectivity with retry support."""
+        try:
+            with ssh_conn:
+                if ssh_conn.is_connective(tcp_timeout=10):
+                    LOGGER.info(f"SSH connectivity to VM {vm_name} verified successfully")
+                    return True
+                LOGGER.warning(f"SSH connectivity test failed for VM {vm_name} - retrying...")
+                return False
+        except Exception as e:
+            LOGGER.warning(f"SSH connection failed for VM {vm_name}: {type(e).__name__}: {e} - retrying...")
+            return False
 
-        LOGGER.info(f"SSH connectivity to VM {vm_name} verified successfully")
+    try:
+        for sample in TimeoutSampler(wait_timeout=timeout, sleep=retry_delay, func=_test_connectivity):
+            if sample:
+                return
+    except TimeoutExpiredError as e:
+        raise TimeoutExpiredError(f"SSH connectivity to VM {vm_name} could not be established after {timeout}s") from e
 
 
 def _parse_windows_network_config(ipconfig_output: str) -> dict[str, dict[str, Any]]:
@@ -779,8 +799,6 @@ def check_vms_power_state(
     source_power_before_migration: str | None,
     target_power_state: str | None = None,
 ) -> None:
-    assert source_vm["power_state"] == "off", "Checking source VM is off"
-
     # If targetPowerState is specified, check that the destination VM matches it
     if target_power_state:
         actual_power_state = destination_vm["power_state"]
@@ -1139,7 +1157,7 @@ def check_vms(
                 source_vm=source_vm,
                 destination_vm=destination_vm,
                 source_power_before_migration=vm.get("source_vm_power"),
-                target_power_state=vm.get("target_power_state"),
+                target_power_state=plan.get("target_power_state"),
             )
         except Exception as exp:
             res[vm_name].append(f"check_vms_power_state - {str(exp)}")

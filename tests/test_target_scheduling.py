@@ -23,7 +23,7 @@ from utilities.utils import populate_vm_ids
 @pytest.mark.usefixtures("cleanup_migrated_vms", "mtv_version_checker")
 @pytest.mark.incremental
 @pytest.mark.min_mtv_version("2.10.0")
-@pytest.mark.tier1
+@pytest.mark.tier0
 class TestTargetSchedulingAllFeatures:
     """Test all target scheduling features: node selector, labels, and affinity."""
 
