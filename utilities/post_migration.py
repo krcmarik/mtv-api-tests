@@ -934,6 +934,9 @@ def check_vm_node_placement(
         destination_vm: Destination VM information including node_name
         expected_node: Expected node name where VM should be scheduled
 
+    Returns:
+        None: No return value; raises pytest.fail on validation errors
+
     Raises:
         pytest.fail: If VM not on expected node or no node assignment
     """
@@ -958,6 +961,9 @@ def check_vm_labels(
     Args:
         destination_vm: Destination VM information including labels
         expected_labels: Expected labels that should be set on the VM
+
+    Returns:
+        None: No return value; raises pytest.fail on validation errors
 
     Raises:
         pytest.fail: If labels don't match
@@ -1007,6 +1013,9 @@ def check_vm_affinity(
     Args:
         destination_vm: VM info dict from provider
         expected_affinity: Expected affinity configuration dict
+
+    Returns:
+        None: No return value; raises pytest.fail on validation errors
 
     Raises:
         pytest.fail: If affinity doesn't match

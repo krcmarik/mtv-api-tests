@@ -16,7 +16,7 @@ from ocp_resources.data_source import DataSource
 from ocp_resources.network_attachment_definition import NetworkAttachmentDefinition
 from ocp_resources.provider import Provider
 from ocp_resources.resource import get_client
-from packaging.version import Version
+from packaging.version import InvalidVersion, Version
 
 # Optional import if available
 from ocp_resources.secret import Secret
@@ -632,12 +632,16 @@ def has_mtv_minimum_version(min_version: str, client: DynamicClient) -> bool:
         bool: True if MTV version >= min_version
 
     Raises:
-        Does not raise exceptions. All exceptions from client interaction or version parsing
-        are caught internally and result in a False return value with a warning log message.
+        Exception: Re-raises any unexpected exceptions after logging.
+            Expected exceptions (ValueError, InvalidVersion, AttributeError,
+            KeyError, ConnectionError) are caught and return False.
     """
     try:
         current_version = get_mtv_version(client=client)
         return Version(current_version) >= Version(min_version)
-    except Exception as e:
+    except (ValueError, InvalidVersion, AttributeError, KeyError, ConnectionError) as e:
         LOGGER.warning(f"Failed to check MTV version: {e}")
         return False
+    except Exception:
+        LOGGER.exception("Unexpected error checking MTV version")
+        raise
