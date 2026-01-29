@@ -238,7 +238,6 @@ class TestSanityWarmMtvMigration:
         )
 
 
-@pytest.mark.tier0
 @pytest.mark.warm
 @pytest.mark.incremental
 @pytest.mark.parametrize(

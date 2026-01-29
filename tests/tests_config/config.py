@@ -1,7 +1,7 @@
 global config
 
 insecure_verify_skip: str = "true"  # SSL verification for OCP API connections
-source_provider_insecure_skip_verify: str = "true"  # SSL verification for source provider (VMware, RHV, etc.)
+source_provider_insecure_skip_verify: str = "false"  # SSL verification for source provider (VMware, RHV, etc.)
 number_of_vms: int = 1
 check_vms_signals: bool = True
 target_namespace_prefix: str = "auto"
@@ -288,22 +288,6 @@ tests_params: dict = {
         "warm_migration": False,
         "copyoffload": True,
     },
-    "test_pre_hook_succeed_post_hook_fail": {
-        "virtual_machines": [
-            {
-                "name": "mtv-tests-rhel8",
-                "source_vm_power": "off",
-            },
-        ],
-        "warm_migration": False,
-        "pre_hook": {
-            "expected_result": "succeed",
-        },
-        "post_hook": {
-            "expected_result": "fail",
-        },
-        "expected_migration_result": "fail",
-    },
     "test_copyoffload_mixed_datastore_migration": {
         "virtual_machines": [
             {
@@ -380,49 +364,6 @@ tests_params: dict = {
         "warm_migration": False,
         "copyoffload": True,
     },
-    "test_target_scheduling_all_features": {
-        "virtual_machines": [
-            {
-                "name": "mtv-tests-rhel8",
-                "source_vm_power": "on",
-                "guest_agent": True,
-            },
-        ],
-        "warm_migration": False,
-        # MTV 2.10.0 target scheduling features
-        "target_node_selector": {
-            "mtv-test-node": None,  # None = auto-generate with session_uuid
-        },
-        "target_labels": {
-            "mtv-test-label": None,  # None = auto-generate with session_uuid
-            "custom-label": "custom-value",  # Static value
-        },
-        "target_affinity": {
-            "podAffinity": {
-                "preferredDuringSchedulingIgnoredDuringExecution": [
-                    {
-                        "podAffinityTerm": {
-                            "labelSelector": {"matchLabels": {"app": "test"}},
-                            "topologyKey": "kubernetes.io/hostname",
-                        },
-                        "weight": 50,
-                    }
-                ]
-            }
-        },
-    },
-    "test_custom_nad_vm_namespace": {
-        "virtual_machines": [
-            {
-                "name": "mtv-tests-rhel8",
-                "source_vm_power": "on",
-                "guest_agent": True,
-            },
-        ],
-        "warm_migration": False,
-        "vm_target_namespace": "custom-vm-namespace",
-        "multus_namespace": "default",
-    },
     "test_copyoffload_scale_migration": {
         "virtual_machines": [
             {
@@ -489,6 +430,89 @@ tests_params: dict = {
         ],
         "warm_migration": False,
         "copyoffload": True,
+    },
+    "test_warm_migration_comprehensive": {
+        "virtual_machines": [
+            {
+                "name": "mtv-win2022-ip-3disks",
+                "source_vm_power": "on",
+                "guest_agent": True,
+            },
+        ],
+        "warm_migration": True,
+        "target_power_state": "on",
+        "preserve_static_ips": True,
+        "vm_target_namespace": "custom-vm-namespace",
+        "multus_namespace": "default",  # Cross-namespace NAD access
+        "pvc_name_template": '{{ .FileName | trimSuffix ".vmdk" | replace "_" "-" }}-{{.DiskIndex}}',
+        "pvc_name_template_use_generate_name": True,
+        "target_labels": {
+            "mtv-comprehensive-test": None,  # None = auto-generate with session_uuid
+            "static-label": "static-value",
+        },
+        "target_affinity": {
+            "podAffinity": {
+                "preferredDuringSchedulingIgnoredDuringExecution": [
+                    {
+                        "podAffinityTerm": {
+                            "labelSelector": {"matchLabels": {"app": "comprehensive-test"}},
+                            "topologyKey": "kubernetes.io/hostname",
+                        },
+                        "weight": 75,
+                    }
+                ]
+            }
+        },
+    },
+    "test_cold_migration_comprehensive": {
+        "virtual_machines": [
+            {
+                "name": "mtv-win2019-3disks",
+                "source_vm_power": "off",
+                "guest_agent": True,
+            },
+        ],
+        "warm_migration": False,
+        "target_power_state": "on",
+        "preserve_static_ips": True,
+        "pvc_name_template": "{{.VmName}}-disk-{{.DiskIndex}}",
+        "pvc_name_template_use_generate_name": False,
+        "target_node_selector": {
+            "mtv-comprehensive-node": None,  # None = auto-generate with session_uuid
+        },
+        "target_labels": {
+            "mtv-comprehensive-label": None,  # None = auto-generate with session_uuid
+            "test-type": "comprehensive",  # Static value
+        },
+        "target_affinity": {
+            "podAffinity": {
+                "preferredDuringSchedulingIgnoredDuringExecution": [
+                    {
+                        "podAffinityTerm": {
+                            "labelSelector": {"matchLabels": {"app": "test"}},
+                            "topologyKey": "kubernetes.io/hostname",
+                        },
+                        "weight": 50,
+                    }
+                ]
+            }
+        },
+        "vm_target_namespace": "mtv-comprehensive-vms",
+        "multus_namespace": "default",  # Cross-namespace NAD access
+    },
+    "test_post_hook_retain_failed_vm": {
+        "virtual_machines": [
+            {
+                "name": "mtv-tests-rhel8",
+                "source_vm_power": "on",
+                "guest_agent": True,
+            },
+        ],
+        "warm_migration": False,
+        "target_power_state": "off",
+        "pre_hook": {"expected_result": "succeed"},
+        "post_hook": {"expected_result": "fail"},
+        "expected_migration_result": "fail",
     },
 }
 

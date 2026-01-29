@@ -26,18 +26,17 @@ if TYPE_CHECKING:
     from libs.base_provider import BaseProvider
 
 
-@pytest.mark.tier1
-@pytest.mark.negative
+@pytest.mark.tier0
 @pytest.mark.incremental
 @pytest.mark.parametrize(
     "class_plan_config",
-    [pytest.param(py_config["tests_params"]["test_pre_hook_succeed_post_hook_fail"])],
+    [pytest.param(py_config["tests_params"]["test_post_hook_retain_failed_vm"])],
     indirect=True,
-    ids=["pre-hook-succeed-post-hook-fail"],
+    ids=["post-hook-retain-failed-vm"],
 )
 @pytest.mark.usefixtures("cleanup_migrated_vms")
-class TestPreHookSucceedPostHookFail:
-    """Test PreHook succeeds but PostHook fails - migration should fail at PostHook step."""
+class TestPostHookRetainFailedVm:
+    """Test PostHook with VM retention - migration fails but VMs should be retained."""
 
     storage_map: StorageMap | None = None
     network_map: NetworkMap | None = None
@@ -54,7 +53,23 @@ class TestPreHookSucceedPostHookFail:
         source_provider_inventory: "ForkliftInventory",
         target_namespace: str,
     ) -> None:
-        """Create StorageMap resource for migration."""
+        """Create StorageMap resource for migration.
+
+        Args:
+            prepared_plan (dict[str, Any]): The prepared migration plan.
+            fixture_store (dict[str, Any]): Fixture store for resource tracking.
+            ocp_admin_client (DynamicClient): OpenShift admin client.
+            source_provider (BaseProvider): Source provider instance.
+            destination_provider (OCPProvider): Destination provider instance.
+            source_provider_inventory (ForkliftInventory): Source provider inventory.
+            target_namespace (str): Target namespace for migration.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If StorageMap creation fails.
+        """
         vms = [vm["name"] for vm in prepared_plan["virtual_machines"]]
         self.__class__.storage_map = get_storage_migration_map(
             fixture_store=fixture_store,
@@ -78,7 +93,24 @@ class TestPreHookSucceedPostHookFail:
         target_namespace: str,
         multus_network_name: dict[str, str],
     ) -> None:
-        """Create NetworkMap resource for migration."""
+        """Create NetworkMap resource for migration.
+
+        Args:
+            prepared_plan (dict[str, Any]): The prepared migration plan.
+            fixture_store (dict[str, Any]): Fixture store for resource tracking.
+            ocp_admin_client (DynamicClient): OpenShift admin client.
+            source_provider (BaseProvider): Source provider instance.
+            destination_provider (OCPProvider): Destination provider instance.
+            source_provider_inventory (ForkliftInventory): Source provider inventory.
+            target_namespace (str): Target namespace for migration.
+            multus_network_name (dict[str, str]): Name of the multus network.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If NetworkMap creation fails.
+        """
         vms = [vm["name"] for vm in prepared_plan["virtual_machines"]]
         self.__class__.network_map = get_network_migration_map(
             fixture_store=fixture_store,
@@ -102,7 +134,23 @@ class TestPreHookSucceedPostHookFail:
         target_namespace: str,
         source_provider_inventory: "ForkliftInventory",
     ) -> None:
-        """Create MTV Plan CR resource with PreHook and PostHook."""
+        """Create MTV Plan CR resource with PreHook and PostHook.
+
+        Args:
+            prepared_plan (dict[str, Any]): The prepared migration plan.
+            fixture_store (dict[str, Any]): Fixture store for resource tracking.
+            ocp_admin_client (DynamicClient): OpenShift admin client.
+            source_provider (BaseProvider): Source provider instance.
+            destination_provider (OCPProvider): Destination provider instance.
+            target_namespace (str): Target namespace for migration.
+            source_provider_inventory (ForkliftInventory): Source provider inventory.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If Plan creation fails.
+        """
         populate_vm_ids(prepared_plan, source_provider_inventory)
 
         self.__class__.plan_resource = create_plan_resource(
@@ -115,10 +163,11 @@ class TestPreHookSucceedPostHookFail:
             virtual_machines_list=prepared_plan["virtual_machines"],
             target_namespace=target_namespace,
             warm_migration=prepared_plan["warm_migration"],
-            pre_hook_name=prepared_plan.get("_pre_hook_name"),
-            pre_hook_namespace=prepared_plan.get("_pre_hook_namespace"),
-            after_hook_name=prepared_plan.get("_post_hook_name"),
-            after_hook_namespace=prepared_plan.get("_post_hook_namespace"),
+            target_power_state=prepared_plan["target_power_state"],
+            pre_hook_name=prepared_plan["_pre_hook_name"],
+            pre_hook_namespace=prepared_plan["_pre_hook_namespace"],
+            after_hook_name=prepared_plan["_post_hook_name"],
+            after_hook_namespace=prepared_plan["_post_hook_namespace"],
         )
         assert self.plan_resource, "Plan creation failed"
 
@@ -129,7 +178,20 @@ class TestPreHookSucceedPostHookFail:
         ocp_admin_client: "DynamicClient",
         target_namespace: str,
     ) -> None:
-        """Execute migration - PreHook succeeds but PostHook fails."""
+        """Execute migration - PreHook succeeds but PostHook fails.
+
+        Args:
+            prepared_plan (dict[str, Any]): The prepared migration plan.
+            fixture_store (dict[str, Any]): Fixture store for resource tracking.
+            ocp_admin_client (DynamicClient): OpenShift admin client.
+            target_namespace (str): Target namespace for migration.
+
+        Returns:
+            None
+
+        Raises:
+            MigrationPlanExecError: If migration fails or times out (expected for post-hook failure).
+        """
         expected_result = prepared_plan["expected_migration_result"]
 
         if expected_result == "fail":
@@ -161,10 +223,27 @@ class TestPreHookSucceedPostHookFail:
         source_provider_inventory: "ForkliftInventory",
         vm_ssh_connections: "SSHConnectionManager | None",
     ) -> None:
-        """Validate migrated VMs - PostHook fails after migration, so VMs should exist."""
+        """Validate migrated VMs - PostHook fails after migration, so VMs should exist.
+
+        Args:
+            prepared_plan (dict[str, Any]): The prepared migration plan.
+            source_provider (BaseProvider): Source provider instance.
+            destination_provider (OCPProvider): Destination provider instance.
+            source_provider_data (dict[str, Any]): Source provider configuration data.
+            target_namespace (str): Target namespace for migration.
+            source_vms_namespace (str): Namespace of source VMs.
+            source_provider_inventory (ForkliftInventory): Source provider inventory.
+            vm_ssh_connections (SSHConnectionManager | None): SSH connections to migrated VMs.
+
+        Returns:
+            None
+
+        Raises:
+            pytest.Failed: If VM validation checks fail.
+        """
         # Runtime skip needed - decision based on previous test's migration execution result
         if not self.__class__.should_check_vms:
-            pytest.skip("Skipping VM checks - PreHook failure means VMs were not migrated")
+            pytest.skip("Skipping VM checks - hook failed before VM migration")
 
         check_vms(
             plan=prepared_plan,
