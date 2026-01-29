@@ -51,6 +51,7 @@ from libs.providers.openshift import OCPProvider
 from utilities.copyoffload_constants import SUPPORTED_VENDORS
 from utilities.copyoffload_migration import get_copyoffload_credential
 from utilities.esxi import install_ssh_key_on_esxi, remove_ssh_key_from_esxi
+from utilities.hooks import create_hook_if_configured
 from utilities.logger import separator, setup_logging
 from utilities.mtv_migration import get_vm_suffix
 from utilities.must_gather import run_must_gather
@@ -767,6 +768,7 @@ def prepared_plan(
     ocp_admin_client: DynamicClient,
     multus_cni_config: str,
     source_provider_inventory: ForkliftInventory,
+    target_namespace: str,
 ) -> Generator[dict[str, Any], None, None]:
     """Prepare plan with cloned VMs for class-based tests.
 
@@ -883,6 +885,10 @@ def prepared_plan(
             vm["snapshots_before_migration"] = source_vm_details["snapshots_data"]
             # Store complete source VM data separately (keeps virtual_machines clean for Plan CR serialization)
             plan["source_vms_data"][vm["name"]] = source_vm_details
+
+    # Create Hooks if configured
+    create_hook_if_configured(plan, "pre_hook", "pre", fixture_store, ocp_admin_client, target_namespace)
+    create_hook_if_configured(plan, "post_hook", "post", fixture_store, ocp_admin_client, target_namespace)
 
     yield plan
 

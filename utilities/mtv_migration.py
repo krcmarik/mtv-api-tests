@@ -11,7 +11,13 @@ from pytest_testconfig import py_config
 from simple_logger.logger import get_logger
 from timeout_sampler import TimeoutExpiredError, TimeoutSampler
 
-from exceptions.exceptions import MigrationPlanExecError
+from exceptions.exceptions import (
+    MigrationNotFoundError,
+    MigrationPlanExecError,
+    MigrationStatusError,
+    VmNotFoundError,
+    VmPipelineError,
+)
 from libs.base_provider import BaseProvider
 from libs.forklift_inventory import ForkliftInventory
 from libs.providers.openshift import OCPProvider
@@ -23,6 +29,103 @@ if TYPE_CHECKING:
     from kubernetes.dynamic import DynamicClient
 
 LOGGER = get_logger(__name__)
+
+
+def _find_migration_for_plan(plan: Plan) -> Migration:
+    """Find Migration CR for Plan.
+
+    Args:
+        plan (Plan): The Plan resource
+
+    Returns:
+        Migration: The Migration CR owned by the Plan
+
+    Raises:
+        MigrationNotFoundError: If Migration CR cannot be found
+    """
+    for migration in Migration.get(client=plan.client, namespace=plan.namespace):
+        if migration.instance.metadata.ownerReferences:
+            for owner_ref in migration.instance.metadata.ownerReferences:
+                if owner_ref.get("kind") == "Plan" and owner_ref.get("name") == plan.name:
+                    return migration
+
+    raise MigrationNotFoundError(f"Migration CR not found for Plan '{plan.name}' in namespace '{plan.namespace}'")
+
+
+def _get_failed_migration_step(plan: Plan, vm_name: str) -> str:
+    """Get step where VM migration failed.
+
+    Examines the Migration status (not Plan) to find which pipeline step failed.
+    The Migration CR contains the detailed VM pipeline execution status.
+
+    Args:
+        plan (Plan): The Plan resource (used to find the associated Migration)
+        vm_name (str): Name of the VM to check (matches against status.vms[].name or id)
+
+    Returns:
+        str: Name of the failed step (e.g., "PreHook", "PostHook", "DiskTransfer")
+
+    Raises:
+        MigrationNotFoundError: If Migration CR cannot be found for the Plan
+        MigrationStatusError: If Migration has no status or no vms in status
+        VmPipelineError: If VM has no pipeline or no failed step in pipeline
+        VmNotFoundError: If VM not found in Migration status
+    """
+    migration = _find_migration_for_plan(plan)
+
+    if not hasattr(migration.instance, "status") or not migration.instance.status:
+        raise MigrationStatusError(migration_name=migration.name)
+
+    vms_status = getattr(migration.instance.status, "vms", None)
+    if not vms_status:
+        raise MigrationStatusError(migration_name=migration.name)
+
+    for vm_status in vms_status:
+        vm_id = getattr(vm_status, "id", "")
+        vm_status_name = getattr(vm_status, "name", "")
+
+        if vm_name not in (vm_id, vm_status_name):
+            continue
+
+        pipeline = getattr(vm_status, "pipeline", None)
+        if not pipeline:
+            raise VmPipelineError(vm_name=vm_name)
+
+        for step in pipeline:
+            step_error = getattr(step, "error", None)
+            if step_error:
+                step_name = step.name
+                LOGGER.info(f"VM {vm_name} failed at step '{step_name}': {step_error}")
+                return step_name
+
+        raise VmPipelineError(vm_name=vm_name)
+
+    raise VmNotFoundError(f"VM {vm_name} not found in Migration {migration.name} status")
+
+
+def _get_all_vms_failed_steps(plan_resource: Plan, vm_names: list[str]) -> dict[str, str | None]:
+    """Map VM names to their failed step names.
+
+    Does NOT validate consistency - returns all results. Caller should validate
+    if all VMs must fail at same step.
+
+    Args:
+        plan_resource (Plan): The Plan resource to check
+        vm_names (list[str]): List of VM names to check
+
+    Returns:
+        dict[str, str | None]: Mapping of VM name to failed step name (or None if unknown)
+    """
+    failed_steps: dict[str, str | None] = {}
+
+    for vm_name in vm_names:
+        try:
+            failed_steps[vm_name] = _get_failed_migration_step(plan_resource, vm_name)
+        except (MigrationNotFoundError, MigrationStatusError, VmPipelineError, VmNotFoundError) as e:
+            LOGGER.warning(f"Could not get failed step for VM '{vm_name}': {e}")
+            failed_steps[vm_name] = None
+
+    return failed_steps
 
 
 def create_plan_resource(
