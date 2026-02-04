@@ -249,23 +249,45 @@ class OpenStackProvider(BaseProvider):
         LOGGER.info(f"Using source flavor '{flavor_obj.name}' (ID: {flavor_id}) and network '{network_id}'")
 
         snapshot: OSP_Image | None = None
+        snapshot_name = f"{clone_vm_name}-snapshot"
 
         try:
-            snapshot_name = f"{clone_vm_name}-snapshot"
             LOGGER.info(f"Creating snapshot '{snapshot_name}'...")
             snapshot = self.api.compute.create_server_image(server=source_vm.id, name=snapshot_name, wait=True)
 
             if not snapshot:
-                raise Exception("Could not create snapshot.")
+                raise ValueError(f"Could not create snapshot '{snapshot_name}' for VM '{source_vm_name}'.")
+
+            LOGGER.info(f"Creating permanent boot volume '{clone_vm_name}-boot-vol' from snapshot...")
+            new_volume = self.api.block_storage.create_volume(
+                name=f"{clone_vm_name}-boot-vol",
+                image_id=snapshot.id,  # Use the snapshot as the source for the volume
+                size=flavor_obj.disk,
+                wait=True,
+            )
+
+            if not new_volume:
+                raise ValueError(f"Failed to create boot volume for clone '{clone_vm_name}'.")
+
+            bdm = [
+                {
+                    "uuid": new_volume.id,
+                    "source_type": "volume",
+                    "destination_type": "volume",
+                    "boot_index": 0,
+                    "delete_on_termination": True,
+                }
+            ]
 
             LOGGER.info(f"Creating new server '{clone_vm_name}' from snapshot...")
             new_server: OSP_Server = self.api.compute.create_server(
                 name=clone_vm_name,
-                image_id=snapshot.id,
+                image_id="",
+                block_device_mapping_v2=bdm,
                 flavor_id=flavor_id,
                 networks=[{"uuid": network_id}],
             )
-            new_server = self.api.compute.wait_for_server(new_server)
+            new_server = self.api.compute.wait_for_server(new_server, wait=300)
 
             # Track cloned VM for cleanup immediately after creation
             if self.fixture_store:
@@ -283,9 +305,20 @@ class OpenStackProvider(BaseProvider):
             return new_server
 
         finally:
+            # Clean up Glance image snapshot if it exists
             if snapshot:
-                LOGGER.info(f"Cleaning up snapshot '{snapshot.name}'...")
+                LOGGER.info(f"Cleaning up Glance image snapshot '{snapshot.name}'...")
                 self.api.image.delete_image(snapshot.id, ignore_missing=True)
+
+                # Track volume snapshot for session cleanup - OpenStack prepends "snapshot for " to the name
+                volume_snapshot_name = f"snapshot for {snapshot_name}"
+                vol_snap = self.api.block_storage.find_snapshot(volume_snapshot_name, ignore_missing=True)
+                if vol_snap:
+                    if self.fixture_store:
+                        self.fixture_store["teardown"].setdefault("VolumeSnapshot", []).append({
+                            "id": vol_snap.id,
+                            "name": vol_snap.name,
+                        })
 
     def delete_vm(self, vm_name: str) -> None:
         """

@@ -66,11 +66,79 @@ class ForkliftInventory(abc.ABC):
 
         raise ValueError(f"VM {name} not found. Available VMs: {self.vms_names}")
 
+    def _check_openstack_volumes_synced(self, vm: dict[str, Any], vm_name: str) -> bool:
+        """Verify OpenStack VM's attached volumes are synced and queryable.
+
+        Args:
+            vm: VM data from Forklift inventory
+            vm_name: VM name for logging
+
+        Returns:
+            True if all volumes synced, False if still waiting
+        """
+        attached_volumes = vm.get("attachedVolumes", [])
+        if not attached_volumes:
+            return False
+
+        # Verify each volume is actually queryable in the inventory
+        for attached_volume in attached_volumes:
+            volume_id = attached_volume.get("ID")
+            if not volume_id:
+                LOGGER.warning(
+                    f"VM '{vm_name}' has attached volume without ID: {attached_volume}. Skipping validation."
+                )
+                continue
+
+            try:
+                self._request(url_path=f"{self.provider_url_path}/volumes/{volume_id}")
+            except (ValueError, ConnectionError, TimeoutError) as e:
+                LOGGER.warning(f"VM '{vm_name}' found but volume '{volume_id}' not yet queryable in inventory: {e}")
+                return False
+
+        return True
+
+    def _check_openstack_networks_synced(self, vm: dict[str, Any], vm_name: str) -> bool:
+        """Verify OpenStack VM's networks are synced to inventory.
+
+        Args:
+            vm: VM data from Forklift inventory
+            vm_name: VM name for logging
+
+        Returns:
+            True if all networks synced, False if still waiting
+        """
+        vm_addresses = vm.get("addresses", {})
+        if not vm_addresses:
+            LOGGER.debug(f"VM '{vm_name}' found but has no addresses yet. Waiting for network sync.")
+            return False
+
+        # Get network names from VM addresses
+        vm_network_names = set(vm_addresses.keys())
+
+        # Get available networks from inventory
+        try:
+            inventory_network_names = {net["name"] for net in self.networks}
+        except (ValueError, ConnectionError, TimeoutError) as e:
+            LOGGER.warning(f"VM '{vm_name}' found but networks not yet queryable in inventory: {e}")
+            return False
+
+        # Check if all VM networks exist in inventory
+        missing_networks = vm_network_names - inventory_network_names
+        if missing_networks:
+            LOGGER.debug(
+                f"VM '{vm_name}' found but networks {missing_networks} not yet in inventory. "
+                f"Available networks: {inventory_network_names}"
+            )
+            return False
+
+        return True
+
     def wait_for_vm(self, name: str, timeout: int = 300, sleep: int = 10) -> dict[str, Any]:
         """Wait for a VM to appear in the Forklift inventory after cloning.
 
-        For OpenStack VMs, also waits for attached volumes to sync, as volumes
-        are synced separately from VM metadata and are required for storage mapping.
+        For OpenStack VMs, also waits for attached volumes and networks to sync,
+        as these are synced separately from VM metadata and are required for
+        storage/network mapping.
 
         Args:
             name: VM name to wait for
@@ -81,10 +149,10 @@ class ForkliftInventory(abc.ABC):
             VM dictionary from inventory
 
         Raises:
-            TimeoutExpiredError: If VM doesn't appear within timeout or attached volumes don't sync
+            TimeoutExpiredError: If VM doesn't appear within timeout or attached volumes/networks don't sync
         """
         LOGGER.info(f"Waiting for VM '{name}' to appear in Forklift inventory...")
-        last_vm = None
+        last_vm: dict[str, Any] = {}
 
         def _check_vm_ready() -> dict[str, Any] | None:
             """Check if VM exists and has all required data synced."""
@@ -93,11 +161,12 @@ class ForkliftInventory(abc.ABC):
                 vm = self.get_vm(name=name)
                 last_vm = vm
 
-                # For OpenStack VMs, verify attached volumes are synced
+                # For OpenStack, verify volumes and networks are synced
                 if self.provider_type == Provider.ProviderType.OPENSTACK:
-                    attached_volumes = vm.get("attachedVolumes", [])
-                    if not attached_volumes:
-                        LOGGER.debug(f"VM '{name}' found but attached volumes not yet synced, waiting...")
+                    if not (
+                        self._check_openstack_volumes_synced(vm, name)
+                        and self._check_openstack_networks_synced(vm, name)
+                    ):
                         return None
 
                 return vm
@@ -116,8 +185,9 @@ class ForkliftInventory(abc.ABC):
         except TimeoutExpiredError:
             if last_vm:
                 raise TimeoutExpiredError(
-                    f"VM '{name}' found in Forklift inventory but attached volumes did not sync after {timeout}s. "
-                    f"Attached volumes: {last_vm.get('attachedVolumes', [])}"
+                    f"VM '{name}' found in Forklift inventory but attached volumes or networks did not sync after {timeout}s. "
+                    f"Attached volumes: {last_vm.get('attachedVolumes', [])}, "
+                    f"VM addresses: {last_vm.get('addresses', {})}"
                 )
             raise TimeoutExpiredError(
                 f"VM '{name}' did not appear in Forklift inventory after {timeout}s. Available VMs: {self.vms_names}"
