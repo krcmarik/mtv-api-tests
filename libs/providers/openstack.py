@@ -242,11 +242,16 @@ class OpenStackProvider(BaseProvider):
 
         # Get source VM's boot volume size (flavor.disk is 0 for volume-backed instances)
         source_volumes = list(self.api.block_storage.volumes(details=True, attach_to=source_vm.id))
-        boot_volume = next(
-            (vol for vol in source_volumes if any(att.get("boot_index") in (0, "0") for att in vol.attachments)),
-            source_volumes[0] if source_volumes else None,
-        )
-        if not boot_volume:
+
+        # Try to find bootable volume first (volume-backed VMs)
+        bootable_volumes = [vol for vol in source_volumes if vol.is_bootable]
+        if len(bootable_volumes) == 1:
+            boot_volume_size = bootable_volumes[0].size
+        elif source_vm.image:
+            # No bootable volume but has image
+            boot_volume_size = flavor_obj.disk
+        else:
+            # Neither bootable volume nor image - cannot determine size
             raise ValueError(f"Could not determine boot volume size for '{source_vm_name}'.")
 
         networks: list[dict[str, Any]] = self.vm_networks_details(vm_name=source_vm_name)
@@ -271,7 +276,7 @@ class OpenStackProvider(BaseProvider):
             new_volume = self.api.block_storage.create_volume(
                 name=f"{clone_vm_name}-boot-vol",
                 image_id=snapshot.id,  # Use the snapshot as the source for the volume
-                size=boot_volume.size,
+                size=boot_volume_size,
                 wait=True,
             )
 
