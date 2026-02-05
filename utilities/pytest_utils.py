@@ -105,6 +105,7 @@ def teardown_resources(
     vmware_cloned_vms = session_teardown_resources.get(Provider.ProviderType.VSPHERE, [])
     openstack_cloned_vms = session_teardown_resources.get(Provider.ProviderType.OPENSTACK, [])
     rhv_cloned_vms = session_teardown_resources.get(Provider.ProviderType.RHV, [])
+    openstack_volume_snapshots = session_teardown_resources.get("VolumeSnapshot", [])
 
     # Resources that was created by running migration
     pods = session_teardown_resources.get(Pod.kind, [])
@@ -341,5 +342,29 @@ def teardown_resources(
         except Exception as exc:
             LOGGER.error(f"Failed to connect to RHV provider for cleanup: {exc}")
             leftovers.setdefault(Provider.ProviderType.RHV, rhv_cloned_vms)
+
+    if openstack_volume_snapshots:
+        try:
+            source_provider_data = session_store["source_provider_data"]
+
+            with OpenStackProvider(
+                host=source_provider_data["fqdn"],
+                username=source_provider_data["username"],
+                password=source_provider_data["password"],
+                auth_url=source_provider_data["api_url"],
+                project_name=source_provider_data["project_name"],
+                user_domain_name=source_provider_data["user_domain_name"],
+                region_name=source_provider_data["region_name"],
+                user_domain_id=source_provider_data["user_domain_id"],
+                project_domain_id=source_provider_data["project_domain_id"],
+            ) as openstack_provider:
+                for snapshot in openstack_volume_snapshots:
+                    snapshot_id = snapshot["id"]
+                    snapshot_name = snapshot["name"]
+                    LOGGER.info(f"Deleting volume snapshot '{snapshot_name}' (ID: {snapshot_id})...")
+                    openstack_provider.api.block_storage.delete_snapshot(snapshot_id, ignore_missing=True)
+        except Exception as exc:
+            LOGGER.error(f"Failed to connect to OpenStack provider for volume snapshot cleanup: {exc}")
+            leftovers.setdefault("VolumeSnapshot", openstack_volume_snapshots)
 
     return leftovers
