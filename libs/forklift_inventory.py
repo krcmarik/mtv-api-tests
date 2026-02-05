@@ -70,11 +70,16 @@ class ForkliftInventory(abc.ABC):
         """Verify OpenStack VM's attached volumes are synced and queryable.
 
         Args:
-            vm: VM data from Forklift inventory
-            vm_name: VM name for logging
+            vm (dict[str, Any]): VM data from Forklift inventory
+            vm_name (str): VM name for logging
 
         Returns:
-            True if all volumes synced, False if still waiting
+            bool: True if all volumes synced, False if still waiting
+
+        Raises:
+            ValueError: If volume query fails with validation error
+            ConnectionError: If unable to connect to inventory API
+            TimeoutError: If volume query times out
         """
         attached_volumes = vm.get("attachedVolumes", [])
         if not attached_volumes:
@@ -84,10 +89,8 @@ class ForkliftInventory(abc.ABC):
         for attached_volume in attached_volumes:
             volume_id = attached_volume.get("ID")
             if not volume_id:
-                LOGGER.warning(
-                    f"VM '{vm_name}' has attached volume without ID: {attached_volume}. Skipping validation."
-                )
-                continue
+                LOGGER.warning(f"VM '{vm_name}' has attached volume without ID - incomplete sync")
+                return False
 
             try:
                 self._request(url_path=f"{self.provider_url_path}/volumes/{volume_id}")
@@ -101,11 +104,16 @@ class ForkliftInventory(abc.ABC):
         """Verify OpenStack VM's networks are synced to inventory.
 
         Args:
-            vm: VM data from Forklift inventory
-            vm_name: VM name for logging
+            vm (dict[str, Any]): VM data from Forklift inventory
+            vm_name (str): VM name for logging
 
         Returns:
-            True if all networks synced, False if still waiting
+            bool: True if all networks synced, False if still waiting
+
+        Raises:
+            ValueError: If network query fails with validation error
+            ConnectionError: If unable to connect to inventory API
+            TimeoutError: If network query times out
         """
         vm_addresses = vm.get("addresses", {})
         if not vm_addresses:
