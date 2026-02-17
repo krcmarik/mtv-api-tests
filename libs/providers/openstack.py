@@ -4,6 +4,7 @@ import copy
 from typing import TYPE_CHECKING, Any, Self
 
 from ocp_resources.provider import Provider
+from openstack import exceptions as os_exc
 from openstack.compute.v2.server import Server as OSP_Server
 from openstack.connection import Connection
 from openstack.image.v2.image import Image as OSP_Image
@@ -91,10 +92,12 @@ class OpenStackProvider(BaseProvider):
             return self.api.compute.get_server(instance_id)
 
     def list_snapshots(self, vm_name: str) -> list[Any]:
-        # Get list of snapshots for future use.
-        instance_id = self.get_instance_id_by_name(name_filter=vm_name)
-        if instance_id:
-            volumes = self.api.block_storage.volumes(details=True, attach_to=instance_id)
+        instance_obj = self.get_instance_obj(name_filter=vm_name)
+        if instance_obj:
+            volumes = [
+                self.api.block_storage.get_volume(attachment["volumeId"])
+                for attachment in self.api.compute.volume_attachments(server=instance_obj)
+            ]
             return [list(self.api.block_storage.snapshots(volume_id=volume.id)) for volume in volumes]
         return []
 
@@ -131,13 +134,43 @@ class OpenStackProvider(BaseProvider):
         )
 
     def get_volume_metadata(self, vm_name: str) -> Any:
-        # Get metadata of the volume attached to the specific instance ID
+        """Get metadata from the boot volume attached to the VM.
+
+        Args:
+            vm_name (str): Name of the VM instance
+
+        Returns:
+            Any: Volume image metadata from the boot volume
+
+        Raises:
+            ValueError: If no boot volume is found for the VM
+
+        Note:
+            The OpenStack volume attachment API does not expose boot_index.
+            This method relies on the volume's is_bootable flag to identify the boot volume.
+        """
         instance_id = self.get_instance_id_by_name(name_filter=vm_name)
-        # Get the volume attachments associated with the instance
-        volume_attachments = self.api.compute.volume_attachments(server=self.api.compute.get_server(instance_id))
+        volume_attachments = list(self.api.compute.volume_attachments(server=self.api.compute.get_server(instance_id)))
+
         for attachment in volume_attachments:
             volume = self.api.block_storage.get_volume(attachment["volumeId"])
-            return volume.volume_image_metadata
+            if volume.is_bootable:
+                return volume.volume_image_metadata
+
+        LOGGER.error(f"No boot volume found for VM '{vm_name}'. Checked {len(volume_attachments)} attachments.")
+        raise ValueError(f"No boot volume found for VM '{vm_name}'")
+
+    def _is_windows(self, os_type_str: str | None) -> bool:
+        """Check if OS type indicates Windows.
+
+        Args:
+            os_type_str (str | None): OS type string from image or volume metadata, or None
+
+        Returns:
+            bool: True if OS type indicates Windows
+        """
+        os_type: str = os_type_str.lower() if os_type_str else ""
+        return "windows" in os_type or "win" in os_type
 
     def vm_dict(self, **kwargs: Any) -> dict[str, Any]:
         # If provider_vm_api is passed, use it directly (VM already retrieved/cloned)
@@ -206,6 +239,19 @@ class OpenStackProvider(BaseProvider):
             result_vm_info["power_state"] = "off"
         else:
             result_vm_info["power_state"] = "other"
+
+        # Guest OS - detect Windows from volume metadata (volume-backed) or image metadata (image-based)
+        win_os = False
+        if volume_metadata:
+            win_os = self._is_windows(volume_metadata.get("os_type", ""))
+        elif source_vm.image:
+            try:
+                image = self.api.image.get_image(source_vm.image["id"])
+                win_os = self._is_windows(getattr(image, "os_type", ""))
+            except os_exc.SDKException as e:
+                LOGGER.warning(f"Failed to get Windows OS info from image for VM '{vm_name}': {e}")
+        result_vm_info["win_os"] = win_os
+
         return result_vm_info
 
     def clone_vm(
@@ -240,18 +286,17 @@ class OpenStackProvider(BaseProvider):
             raise ValueError(f"Could not find flavor for source VM '{source_vm_name}'.")
         flavor_id: str = flavor_obj.id
 
-        # Get source VM's boot volume size (flavor.disk is 0 for volume-backed instances)
-        source_volumes = list(self.api.block_storage.volumes(details=True, attach_to=source_vm.id))
+        source_volumes = [
+            self.api.block_storage.get_volume(attachment["volumeId"])
+            for attachment in self.api.compute.volume_attachments(server=source_vm)
+        ]
 
-        # Try to find bootable volume first (volume-backed VMs)
         bootable_volumes = [vol for vol in source_volumes if vol.is_bootable]
         if len(bootable_volumes) == 1:
             boot_volume_size = bootable_volumes[0].size
         elif source_vm.image:
-            # No bootable volume but has image
             boot_volume_size = flavor_obj.disk
         else:
-            # Neither bootable volume nor image - cannot determine size
             raise ValueError(f"Could not determine boot volume size for '{source_vm_name}'.")
 
         networks: list[dict[str, Any]] = self.vm_networks_details(vm_name=source_vm_name)
@@ -269,29 +314,76 @@ class OpenStackProvider(BaseProvider):
             LOGGER.info(f"Creating snapshot '{snapshot_name}'...")
             snapshot = self.api.compute.create_server_image(server=source_vm.id, name=snapshot_name, wait=True)
 
-            if not snapshot:
-                raise ValueError(f"Could not create snapshot '{snapshot_name}' for VM '{source_vm_name}'.")
+            # Get all volume snapshots created by create_server_image()
+            volume_snapshot_name = f"snapshot for {snapshot_name}"
+            volume_snapshots = list(self.api.block_storage.snapshots(name=volume_snapshot_name))
 
-            LOGGER.info(f"Creating permanent boot volume '{clone_vm_name}-boot-vol' from snapshot...")
-            new_volume = self.api.block_storage.create_volume(
-                name=f"{clone_vm_name}-boot-vol",
-                image_id=snapshot.id,  # Use the snapshot as the source for the volume
-                size=boot_volume_size,
-                wait=True,
-            )
+            if not volume_snapshots:
+                raise ValueError(f"No volume snapshots found for '{volume_snapshot_name}'.")
 
-            if not new_volume:
-                raise ValueError(f"Failed to create boot volume for clone '{clone_vm_name}'.")
+            LOGGER.info(f"Found {len(volume_snapshots)} volume snapshot(s) for cloning")
 
-            bdm = [
-                {
+            # Sort source volumes by ID for consistent ordering
+            source_volumes_sorted = sorted(source_volumes, key=lambda v: v.id)
+
+            if len(source_volumes) != len(volume_snapshots):
+                raise ValueError(
+                    f"Volume count mismatch for '{source_vm_name}': "
+                    f"source VM has {len(source_volumes)} volumes but "
+                    f"{len(volume_snapshots)} snapshots were created. "
+                    f"Source volumes: {[v.id for v in source_volumes]}, "
+                    f"Snapshots: {[s.id for s in volume_snapshots]}"
+                )
+
+            snapshot_by_volume_id = {snap.volume_id: snap for snap in volume_snapshots}
+
+            boot_volume = next((vol for vol in source_volumes_sorted if vol.is_bootable), None)
+
+            bdm = []
+            next_data_boot_index = 1
+
+            for idx, source_vol in enumerate(source_volumes_sorted):
+                vol_snapshot = snapshot_by_volume_id.get(source_vol.id)
+                if not vol_snapshot:
+                    raise ValueError(
+                        f"No snapshot found for source volume '{source_vol.name}' (ID: {source_vol.id}). "
+                        f"Available snapshots: {[s.id for s in volume_snapshots]}"
+                    )
+
+                is_boot = source_vol.id == boot_volume.id if boot_volume else idx == 0
+                volume_size = boot_volume_size if is_boot else source_vol.size
+                volume_name_suffix = "boot-vol" if is_boot else f"data-vol-{idx}"
+                boot_idx = 0 if is_boot else next_data_boot_index
+
+                LOGGER.info(
+                    f"Creating volume '{clone_vm_name}-{volume_name_suffix}' from snapshot "
+                    f"(size={volume_size}GB, boot_index={boot_idx})"
+                )
+
+                new_volume = self.api.block_storage.create_volume(
+                    name=f"{clone_vm_name}-{volume_name_suffix}",
+                    snapshot_id=vol_snapshot.id,
+                    size=volume_size,
+                    wait=True,
+                )
+
+                bdm.append({
                     "uuid": new_volume.id,
                     "source_type": "volume",
                     "destination_type": "volume",
-                    "boot_index": 0,
+                    "boot_index": boot_idx,
                     "delete_on_termination": True,
-                }
-            ]
+                })
+
+                if not is_boot:
+                    next_data_boot_index += 1
+
+            # Validate exactly one boot volume exists
+            if sum(1 for item in bdm if item["boot_index"] == 0) != 1:
+                raise ValueError(f"Expected exactly 1 boot volume for '{clone_vm_name}'")
+
+            # Ensure boot volume is first in BDM
+            bdm.sort(key=lambda x: x["boot_index"])
 
             LOGGER.info(f"Creating new server '{clone_vm_name}' from snapshot...")
             new_server: OSP_Server = self.api.compute.create_server(
@@ -326,12 +418,16 @@ class OpenStackProvider(BaseProvider):
 
                 # Track volume snapshot for session cleanup - OpenStack prepends "snapshot for " to the name
                 volume_snapshot_name = f"snapshot for {snapshot_name}"
-                vol_snap = self.api.block_storage.find_snapshot(volume_snapshot_name, ignore_missing=True)
-                if vol_snap:
-                    if self.fixture_store:
+                # Find all volume snapshots for cleanup. OpenStack may create multiple volume snapshots
+                # with the same name when snapshotting VMs with multiple attached volumes.
+                matching_snapshots = list(self.api.block_storage.snapshots(name=volume_snapshot_name))
+
+                # Track all matching snapshots for cleanup
+                if matching_snapshots and self.fixture_store:
+                    for snap in matching_snapshots:
                         self.fixture_store["teardown"].setdefault("VolumeSnapshot", []).append({
-                            "id": vol_snap.id,
-                            "name": vol_snap.name,
+                            "id": snap.id,
+                            "name": snap.name,
                         })
 
     def delete_vm(self, vm_name: str) -> None:
