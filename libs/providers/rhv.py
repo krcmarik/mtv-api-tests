@@ -242,7 +242,7 @@ class OvirtProvider(BaseProvider):
 
         # Guest OS - detect Windows from VM OS type
         os_type = (source_vm.os.type if source_vm.os and source_vm.os.type else "").lower()
-        result_vm_info["win_os"] = "windows" in os_type or "win" in os_type
+        result_vm_info["win_os"] = "windows" in os_type
 
         return result_vm_info
 

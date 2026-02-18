@@ -91,13 +91,44 @@ class OpenStackProvider(BaseProvider):
         if instance_id:
             return self.api.compute.get_server(instance_id)
 
-    def list_snapshots(self, vm_name: str) -> list[Any]:
+    def _get_attached_volumes(self, server: OSP_Server) -> list[Any]:
+        """Get all volumes attached to a server.
+
+        Args:
+            server: OpenStack server object
+
+        Returns:
+            List of volume objects attached to the server
+        """
+        return [
+            self.api.block_storage.get_volume(attachment["volumeId"])
+            for attachment in self.api.compute.volume_attachments(server=server)
+        ]
+
+    def list_snapshots(self, vm_name: str) -> list[list[Any]]:
+        """Get snapshots for all volumes attached to a VM.
+
+        Returns a list of snapshot lists - one inner list per volume attached to the VM.
+        Each inner list contains all snapshots for that specific volume.
+
+        Args:
+            vm_name: Name of the VM instance
+
+        Returns:
+            List of snapshot lists. Outer list corresponds to volumes, inner lists contain
+            snapshots for each volume. Returns empty list if VM not found.
+
+        Raises:
+            OpenStack API exceptions may be raised during volume or snapshot retrieval.
+
+        Note:
+            Uses get_instance_obj to retrieve the VM, then iterates through volume_attachments
+            to get volumes via block_storage.get_volume, and finally retrieves snapshots for
+            each volume via block_storage.snapshots.
+        """
         instance_obj = self.get_instance_obj(name_filter=vm_name)
         if instance_obj:
-            volumes = [
-                self.api.block_storage.get_volume(attachment["volumeId"])
-                for attachment in self.api.compute.volume_attachments(server=instance_obj)
-            ]
+            volumes = self._get_attached_volumes(server=instance_obj)
             return [list(self.api.block_storage.snapshots(volume_id=volume.id)) for volume in volumes]
         return []
 
@@ -117,10 +148,8 @@ class OpenStackProvider(BaseProvider):
         return vm_networks_details
 
     def list_volumes(self, vm_name: str) -> list[Any]:
-        return [
-            self.api.block_storage.get_volume(attachment["volumeId"])
-            for attachment in self.api.compute.volume_attachments(server=self.get_instance_obj(name_filter=vm_name))
-        ]
+        instance_obj = self.get_instance_obj(name_filter=vm_name)
+        return self._get_attached_volumes(server=instance_obj) if instance_obj else []
 
     def get_flavor_obj(self, vm_name: str) -> Any:
         # Retrieve the specific instance
@@ -137,10 +166,10 @@ class OpenStackProvider(BaseProvider):
         """Get metadata from the boot volume attached to the VM.
 
         Args:
-            vm_name (str): Name of the VM instance
+            vm_name: Name of the VM instance
 
         Returns:
-            Any: Volume image metadata from the boot volume
+            Volume image metadata from the boot volume
 
         Raises:
             ValueError: If no boot volume is found for the VM
@@ -149,28 +178,30 @@ class OpenStackProvider(BaseProvider):
             The OpenStack volume attachment API does not expose boot_index.
             This method relies on the volume's is_bootable flag to identify the boot volume.
         """
-        instance_id = self.get_instance_id_by_name(name_filter=vm_name)
-        volume_attachments = list(self.api.compute.volume_attachments(server=self.api.compute.get_server(instance_id)))
+        instance_obj = self.get_instance_obj(name_filter=vm_name)
+        if not instance_obj:
+            raise ValueError(f"VM '{vm_name}' not found")
 
-        for attachment in volume_attachments:
-            volume = self.api.block_storage.get_volume(attachment["volumeId"])
+        volumes = self._get_attached_volumes(server=instance_obj)
+
+        for volume in volumes:
             if volume.is_bootable:
                 return volume.volume_image_metadata
 
-        LOGGER.error(f"No boot volume found for VM '{vm_name}'. Checked {len(volume_attachments)} attachments.")
+        LOGGER.error(f"No boot volume found for VM '{vm_name}'. Checked {len(volumes)} volumes.")
         raise ValueError(f"No boot volume found for VM '{vm_name}'")
 
     def _is_windows(self, os_type_str: str | None) -> bool:
         """Check if OS type indicates Windows.
 
         Args:
-            os_type_str (str | None): OS type string from image or volume metadata, or None
+            os_type_str: OS type string from image or volume metadata, or None
 
         Returns:
-            bool: True if OS type indicates Windows
+            True if OS type indicates Windows
         """
         os_type: str = os_type_str.lower() if os_type_str else ""
-        return "windows" in os_type or "win" in os_type
+        return "windows" in os_type
 
     def vm_dict(self, **kwargs: Any) -> dict[str, Any]:
         # If provider_vm_api is passed, use it directly (VM already retrieved/cloned)
@@ -286,10 +317,7 @@ class OpenStackProvider(BaseProvider):
             raise ValueError(f"Could not find flavor for source VM '{source_vm_name}'.")
         flavor_id: str = flavor_obj.id
 
-        source_volumes = [
-            self.api.block_storage.get_volume(attachment["volumeId"])
-            for attachment in self.api.compute.volume_attachments(server=source_vm)
-        ]
+        source_volumes = self._get_attached_volumes(server=source_vm)
 
         bootable_volumes = [vol for vol in source_volumes if vol.is_bootable]
         if len(bootable_volumes) == 1:
@@ -323,8 +351,11 @@ class OpenStackProvider(BaseProvider):
 
             LOGGER.info(f"Found {len(volume_snapshots)} volume snapshot(s) for cloning")
 
-            # Sort source volumes by ID for consistent ordering
-            source_volumes_sorted = sorted(source_volumes, key=lambda v: v.id)
+            # Sort by device path to preserve attachment order. Fall back to volume ID if device is missing.
+            # Device paths like /dev/vda, /dev/vdb naturally sort in attachment order.
+            source_volumes_sorted = sorted(
+                source_volumes, key=lambda v: next((a.get("device") for a in v.attachments if a.get("device")), v.id)
+            )
 
             if len(source_volumes) != len(volume_snapshots):
                 raise ValueError(
