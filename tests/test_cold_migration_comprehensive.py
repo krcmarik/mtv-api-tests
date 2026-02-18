@@ -18,9 +18,9 @@ from utilities.utils import populate_vm_ids
 if TYPE_CHECKING:
     from kubernetes.dynamic import DynamicClient
     from libs.base_provider import BaseProvider
-    from libs.provider_inventory.ocp_inventory import ForkliftInventory
+    from libs.forklift_inventory import ForkliftInventory
     from libs.providers.openshift import OCPProvider
-    from libs.ssh import SSHConnectionManager
+    from utilities.ssh_utils import SSHConnectionManager
 
 
 @pytest.mark.parametrize(
@@ -203,7 +203,6 @@ class TestColdMigrationComprehensive:
         prepared_plan: dict[str, Any],
         source_provider: "BaseProvider",
         destination_provider: "OCPProvider",
-        target_namespace: str,
         source_provider_data: dict[str, Any],
         source_vms_namespace: str,
         source_provider_inventory: "ForkliftInventory",
@@ -217,7 +216,6 @@ class TestColdMigrationComprehensive:
             prepared_plan (dict[str, Any]): Test plan configuration with VM details
             source_provider (BaseProvider): Source provider connection
             destination_provider (OCPProvider): Destination provider connection
-            target_namespace (str): Target namespace for migration resources
             source_provider_data (dict[str, Any]): Source provider configuration
             source_vms_namespace (str): Source VMs namespace
             source_provider_inventory (ForkliftInventory): Source provider inventory

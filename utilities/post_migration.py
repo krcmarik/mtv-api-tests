@@ -113,7 +113,11 @@ def check_ssh_connectivity(
     ssh_conn = vm_ssh_connections.create(vm_name=vm_name, username=ssh_username, password=ssh_password)
 
     def _test_connectivity() -> bool:
-        """Test SSH connectivity with retry support."""
+        """Test SSH connectivity with retry support.
+
+        Returns:
+            bool: True when connectivity is verified; False to retry.
+        """
         try:
             with ssh_conn:
                 if ssh_conn.is_connective(tcp_timeout=10):
@@ -121,7 +125,7 @@ def check_ssh_connectivity(
                     return True
                 LOGGER.warning(f"SSH connectivity test failed for VM {vm_name} - retrying...")
                 return False
-        except Exception as e:
+        except (SSHException, AuthenticationException, NoValidConnectionsError, ChannelException) as e:
             LOGGER.warning(f"SSH connection failed for VM {vm_name}: {type(e).__name__}: {e} - retrying...")
             return False
 

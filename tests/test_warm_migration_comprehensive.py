@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from libs.base_provider import BaseProvider
     from libs.forklift_inventory import ForkliftInventory
     from libs.providers.openshift import OCPProvider
-    from libs.ssh import SSHConnectionManager
+    from utilities.ssh_utils import SSHConnectionManager
 
 _SOURCE_PROVIDER_TYPE = load_source_providers().get(py_config.get("source_provider", ""), {}).get("type")
 
@@ -233,7 +233,6 @@ class TestWarmMigrationComprehensive:
         source_provider: "BaseProvider",
         destination_provider: "OCPProvider",
         source_provider_data: dict[str, Any],
-        target_namespace: str,
         source_vms_namespace: str,
         source_provider_inventory: "ForkliftInventory",
         vm_ssh_connections: "SSHConnectionManager",
@@ -246,7 +245,6 @@ class TestWarmMigrationComprehensive:
             source_provider: Source provider instance
             destination_provider: Destination provider instance
             source_provider_data: Source provider configuration data
-            target_namespace: Target namespace for migration
             source_vms_namespace: Namespace of source VMs
             source_provider_inventory: Source provider inventory
             vm_ssh_connections: SSH connections to migrated VMs

@@ -20,8 +20,8 @@ from utilities.utils import populate_vm_ids
 if TYPE_CHECKING:
     from kubernetes.dynamic import DynamicClient
     from libs.ocp_provider import OCPProvider
-    from libs.provider_inventory.ocp_inventory import ForkliftInventory
-    from libs.ssh import SSHConnectionManager
+    from libs.forklift_inventory import ForkliftInventory
+    from utilities.ssh_utils import SSHConnectionManager
 
     from libs.base_provider import BaseProvider
 
