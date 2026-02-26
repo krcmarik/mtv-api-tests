@@ -122,7 +122,7 @@ class OCPProvider(BaseProvider):
             dict[str, Any]: VM information dictionary.
 
         Raises:
-            ValueError: If `ocp_resource` is not set.
+            ValueError: If `ocp_resource` is not set or VM fails to start.
             InvalidVMNameError: If destination VM name fails Kubernetes validation.
         """
         if not self.ocp_resource:
@@ -207,6 +207,18 @@ class OCPProvider(BaseProvider):
         result_vm_info["affinity"] = template_spec.get("affinity", {})
 
         self.start_vm(cnv_vm)
+
+        printable_status = cnv_vm.instance.status.printableStatus
+        if printable_status != cnv_vm.Status.RUNNING:
+            conditions: list[dict[str, Any]] = cnv_vm.instance.status.get("conditions", [])
+            condition_details = "; ".join(
+                f"{c['type']}: {c.get('reason', '')} - {c.get('message', '')}" for c in conditions
+            )
+            raise ValueError(
+                f"VM '{cnv_vm_name}' in namespace '{cnv_vm_namespace}' failed to start. "
+                f"Status: '{printable_status}'. Conditions: {condition_details}"
+            )
+
         # True guest agent is reporting all ok
         result_vm_info["guest_agent_running"] = (
             self.wait_for_cnv_vm_guest_agent(vm_dict=result_vm_info, timeout=guest_agent_timeout)
