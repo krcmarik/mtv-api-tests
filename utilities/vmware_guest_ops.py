@@ -185,6 +185,7 @@ def detect_vmware_ip_origins_via_guest_ops(
 
     Raises:
         ValueError: If guest credentials are not found in provider config
+        GuestCommandError: If the guest command exits with a non-zero exit code
         TimeoutExpiredError: If the guest process does not complete within 30 seconds
         vim.fault.GuestOperationsFault: If guest operations fail (auth, temp file, process)
         urllib.error.URLError: If file transfer from guest fails
@@ -236,9 +237,9 @@ def detect_vmware_ip_origins_via_guest_ops(
             command=script,
             vcenter_host=vcenter_host,
         )
-    except GuestCommandError as e:
-        LOGGER.warning(f"{e}")
-        return
+    except GuestCommandError:
+        LOGGER.warning(f"Guest command failed for VM {vm.name}, IP origin detection incomplete")
+        raise
 
     origins = _parse_nmcli_ip_origins(output)
     if not origins:

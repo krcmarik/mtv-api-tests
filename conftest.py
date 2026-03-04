@@ -1034,6 +1034,11 @@ def prepared_plan(
                 except ValueError:
                     raise
                 except Exception as e:
+                    if plan.get("preserve_static_ips"):
+                        raise ValueError(
+                            f"Failed to detect IP origins via Guest Operations for VM {vm['name']}: {e}. "
+                            "IP origin detection is required when preserve_static_ips is enabled."
+                        ) from e
                     LOGGER.warning(
                         f"Failed to detect IP origins via Guest Operations for VM {vm['name']}: {e}. "
                         "Static IP verification may not work for this VM."
