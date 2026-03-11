@@ -18,6 +18,7 @@ from kubernetes.dynamic.exceptions import NotFoundError
 
 if TYPE_CHECKING:
     from kubernetes.dynamic import DynamicClient
+    from libs.providers.vmware import VMWareProvider
 from ocp_resources.forklift_controller import ForkliftController
 from ocp_resources.namespace import Namespace
 from ocp_resources.network_attachment_definition import NetworkAttachmentDefinition
@@ -49,7 +50,7 @@ from libs.forklift_inventory import (
 )
 from libs.providers.openshift import OCPProvider
 from utilities.copyoffload_constants import SUPPORTED_VENDORS
-from utilities.copyoffload_migration import get_copyoffload_credential
+from utilities.copyoffload_migration import get_copyoffload_credential, wait_for_vmware_cloud_init_all_vms
 from utilities.esxi import install_ssh_key_on_esxi, remove_ssh_key_from_esxi
 from utilities.hooks import create_hook_if_configured
 from utilities.logger import separator, setup_logging
@@ -1572,3 +1573,35 @@ def setup_copyoffload_ssh(source_provider, source_provider_data, copyoffload_con
         password=esxi_password,
         public_key=public_key,
     )
+
+
+# TODO: Move to copy-offload conftest once copy-offload folder exists
+@pytest.fixture(scope="class")
+def vmware_cloud_init_complete(
+    prepared_plan: dict[str, Any],
+    source_provider: VMWareProvider,
+    source_provider_data: dict[str, Any],
+) -> None:
+    """Ensure cloud-init has finished on all VMs before migration tests run."""
+    wait_for_vmware_cloud_init_all_vms(
+        prepared_plan=prepared_plan,
+        source_provider=source_provider,
+        source_provider_data=source_provider_data,
+    )
+
+
+# TODO: Move to copy-offload conftest once copy-offload folder exists
+@pytest.fixture(scope="class")
+def vmware_cloud_init_complete_both_plans(
+    prepared_plan_1: dict[str, Any],
+    prepared_plan_2: dict[str, Any],
+    source_provider: VMWareProvider,
+    source_provider_data: dict[str, Any],
+) -> None:
+    """Ensure cloud-init has finished on all VMs from both plans before migration tests run."""
+    for plan in (prepared_plan_1, prepared_plan_2):
+        wait_for_vmware_cloud_init_all_vms(
+            prepared_plan=plan,
+            source_provider=source_provider,
+            source_provider_data=source_provider_data,
+        )
