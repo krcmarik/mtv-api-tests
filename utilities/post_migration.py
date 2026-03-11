@@ -213,8 +213,8 @@ def _parse_linux_network_config(nmcli_output: str) -> dict[str, dict[str, Any]]:
 
         interfaces[device["device"]] = {
             "name": device["device"],
-            "ip_addresses": [{"ip_address": c.rsplit("/", 1)[0], "status": ""} for c in cidrs],
-            "subnet_mask": cidrs[0].rsplit("/", 1)[1],
+            "ip_addresses": [{"ip_address": str(ipaddress.ip_interface(c).ip), "status": ""} for c in cidrs],
+            "subnet_mask": str(ipaddress.ip_interface(cidrs[0]).netmask),
             **({"macAddress": device["hwaddr"]} if device.get("hwaddr") else {}),
             **({"gateway": device["ip4_gateway"]} if device.get("ip4_gateway") else {}),
         }

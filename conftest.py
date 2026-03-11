@@ -75,7 +75,7 @@ from utilities.utils import (
     load_source_providers,
     resolve_providers_json_path,
 )
-from utilities.vmware_guest_ops import detect_vmware_ip_origins_via_guest_ops
+from utilities.vmware_guest_operations import detect_vmware_ip_origins_via_guest_ops
 from utilities.virtctl import add_to_path, download_virtctl_from_cluster
 from utilities.worker_node_selection import get_worker_nodes, select_node_by_available_memory
 
