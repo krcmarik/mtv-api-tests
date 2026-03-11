@@ -412,9 +412,9 @@ def check_static_ip_preservation(
                         else:
                             current_interfaces = _parse_linux_network_config(stdout)
                         LOGGER.info(f"{' '.join(network_cmd)} command executed successfully")
-                    except Exception as e:
-                        LOGGER.warning(f"Failed to parse {' '.join(network_cmd)} output: {e}")
-                        return None
+                    except Exception:
+                        LOGGER.exception(f"Failed to parse {' '.join(network_cmd)} output")
+                        raise
 
                     # Find matching interface
                     matching_interface = None
