@@ -1156,11 +1156,18 @@ def labeled_worker_node(
 
     target_node = select_node_by_available_memory(ocp_admin_client, worker_nodes)
 
-    # Extract label key and configured value
-    label_key, config_value = next(iter(target_node_selector.items()))
+    # Extract base label key and configured value
+    base_label_key, config_value = next(iter(target_node_selector.items()))
 
-    # Use session_uuid if configured value is None (allows unique labeling)
-    label_value = fixture_store["session_uuid"] if config_value is None else config_value
+    # When config_value is None (auto-generated mode), make key unique per session
+    if config_value is None:
+        session_uuid = fixture_store["session_uuid"]
+        suffix = f"-{session_uuid}"
+        label_key = f"{base_label_key[: 63 - len(suffix)]}{suffix}"
+        label_value = session_uuid
+    else:
+        label_key = base_label_key
+        label_value = config_value
 
     LOGGER.info(f"Labeling node '{target_node}' with {label_key}={label_value} for target scheduling")
 
