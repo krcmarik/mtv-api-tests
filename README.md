@@ -482,8 +482,7 @@ Schedule VMs to specific labeled nodes.
 
 ```python
 "target_node_selector": {
-    "migration-workload": "true",
-    "test-id": None,  # Auto-generated
+    "migration-workload": None,  # Auto-generated with session_uuid
 }
 ```
 
