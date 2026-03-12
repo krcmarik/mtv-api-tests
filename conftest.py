@@ -1140,7 +1140,7 @@ def labeled_worker_node(
         dict with keys: node_name, label_key, label_value
 
     Raises:
-        ValueError: If target_node_selector not in test config, contains more than one label,
+        ValueError: If target_node_selector not in test config, does not contain exactly one label,
             or no worker nodes found
     """
     try:
