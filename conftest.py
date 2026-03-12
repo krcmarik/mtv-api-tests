@@ -1116,7 +1116,8 @@ def labeled_worker_node(
         dict with keys: node_name, label_key, label_value
 
     Raises:
-        ValueError: If target_node_selector not in test config or no worker nodes found
+        ValueError: If target_node_selector not in test config, contains more than one label,
+            or no worker nodes found
     """
     try:
         target_node_selector = prepared_plan["target_node_selector"]
@@ -1125,6 +1126,9 @@ def labeled_worker_node(
             "target_node_selector not found in test configuration. "
             "Add 'target_node_selector' to your test config in tests/tests_config/config.py"
         ) from None
+
+    if len(target_node_selector) != 1:
+        raise ValueError(f"target_node_selector must contain exactly one label, got {len(target_node_selector)}")
 
     worker_nodes = get_worker_nodes(ocp_admin_client)
     if not worker_nodes:
@@ -1136,10 +1140,16 @@ def labeled_worker_node(
     base_label_key, config_value = next(iter(target_node_selector.items()))
 
     # When config_value is None (auto-generated mode), make key unique per session
+    # to prevent parallel execution conflicts (two sessions on same node would overwrite each other's label)
     if config_value is None:
         session_uuid = fixture_store["session_uuid"]
         suffix = f"-{session_uuid}"
-        label_key = f"{base_label_key[: 63 - len(suffix)]}{suffix}"
+        # For qualified keys (prefix/name), only truncate the name segment
+        if "/" in base_label_key:
+            prefix, name = base_label_key.split("/", 1)
+            label_key = f"{prefix}/{name[: 63 - len(suffix)]}{suffix}"
+        else:
+            label_key = f"{base_label_key[: 63 - len(suffix)]}{suffix}"
         label_value = session_uuid
     else:
         label_key = base_label_key
