@@ -206,7 +206,8 @@ class TestPostHookRetainFailedVm:
                 self.__class__.should_check_vms = validate_hook_failure_and_check_vms(self.plan_resource, prepared_plan)
             except Exception as e:
                 # Chain with original migration error so the root cause is visible in traceback
-                raise e from exc_info.value
+                e.__cause__ = exc_info.value
+                raise
         else:
             execute_migration(
                 ocp_admin_client=ocp_admin_client,
