@@ -29,7 +29,6 @@ addopts =
   --tc-file=tests/tests_config/config.py
   --tc-format=python
   --junit-xml=junit-report.xml
-  --basetemp=/tmp/pytest
   --show-progress
   --strict-markers
   --jira
@@ -54,7 +53,7 @@ What that means in day-to-day use:
 - `--tc-file=tests/tests_config/config.py` and `--tc-format=python` load defaults through `pytest-testconfig`.
 - `--junit-xml=junit-report.xml` always writes a JUnit report in the repo working directory.
 - `junit_logging = all` means logs are included in the JUnit output.
-- `--basetemp=/tmp/pytest` gives pytest a fixed temp root for the run.
+- `basetemp` is auto-generated per session (e.g., `/tmp/pytest-a1b2c3d4`) via `pytest_configure` to prevent cross-session conflicts. Override with `--basetemp=/path` if needed.
 - `--show-progress` enables progress output from `pytest-progress`.
 - `--strict-markers` turns marker typos into immediate errors instead of silently ignoring them.
 - `--jira` enables `pytest-jira`.

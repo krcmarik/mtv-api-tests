@@ -127,7 +127,7 @@ def pytest_configure(config: pytest.Config) -> None:
         config (pytest.Config): Pytest configuration object used to set basetemp.
     """
     if config.option.basetemp is None:
-        config.option.basetemp = f"/tmp/pytest-{uuid.uuid4().hex[:8]}"
+        config.option.basetemp = str(Path(tempfile.gettempdir()) / f"pytest-{uuid.uuid4().hex[:8]}")
 
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)

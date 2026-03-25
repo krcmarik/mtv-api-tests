@@ -28,7 +28,6 @@ addopts =
   --tc-file=tests/tests_config/config.py
   --tc-format=python
   --junit-xml=junit-report.xml
-  --basetemp=/tmp/pytest
   --show-progress
   --strict-markers
   --jira
