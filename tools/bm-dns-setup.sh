@@ -402,6 +402,10 @@ disable)
     validate_domain "$DOMAIN"
     run_disable "$DOMAIN"
   else
+    if [[ ! -f "$STATE_FILE" ]]; then
+      echo "bm-dns-setup is not active. Nothing to disable."
+      exit 0
+    fi
     run_disable
   fi
   ;;
