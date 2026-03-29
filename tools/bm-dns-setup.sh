@@ -19,7 +19,7 @@ fi
 STATE_FILE="${_state_dir}/bm-dns-setup.state"
 unset _state_dir
 
-USAGE="Usage: $(basename "$0") enable <bm-host-ip> [--domain <domain>]
+USAGE="Usage: $(basename "$0") enable <bm-host-ip-or-fqdn> [--domain <domain>]
        $(basename "$0") disable [--domain <domain>]
        $(basename "$0") status
 
@@ -30,13 +30,15 @@ Options:
   --domain <domain>  DNS domain to configure (default: $DOMAIN)
 
 Commands:
-  enable <ip>  Set the BM host IP as DNS server for the domain
-  disable      Revert DNS settings (restores previous config)
-               Use --domain <domain> if state file is missing
-  status       Show current bm-dns-setup state
+  enable <ip|fqdn>  Set the BM host as DNS server for the domain.
+                     Accepts an IP address or FQDN (resolved to IP automatically).
+  disable            Revert DNS settings (restores previous config)
+                     Use --domain <domain> if state file is missing
+  status             Show current bm-dns-setup state
 
 Examples:
   $(basename "$0") enable 10.46.248.80
+  $(basename "$0") enable myhost.example.com
   $(basename "$0") enable 10.46.248.80 --domain custom.local
   $(basename "$0") disable
   $(basename "$0") disable --domain mtv.local
@@ -64,6 +66,84 @@ validate_domain() {
     [[ ${#label} -le 63 ]] || die "Invalid domain: $domain"
     [[ "$label" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || die "Invalid domain: $domain"
   done
+}
+
+resolve_host() {
+  local host="$1"
+  local octet="(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
+
+  # If it already looks like an IPv4 address, return as-is
+  if [[ "$host" =~ ^${octet}\.${octet}\.${octet}\.${octet}$ ]]; then
+    echo "$host"
+    return
+  fi
+
+  # Resolve FQDN to IP address
+  local resolved=""
+  if command -v getent &>/dev/null; then
+    resolved="$(getent hosts "$host" 2>/dev/null | awk '{print $1; exit}')" || true
+  fi
+
+  if [[ -z "$resolved" ]] && command -v dig &>/dev/null; then
+    resolved="$(dig +short "$host" 2>/dev/null | head -n1)" || true
+  fi
+
+  [[ -n "$resolved" ]] || die "Failed to resolve hostname '$host' to an IP address"
+  echo "$resolved"
+}
+
+check_already_active() {
+  local new_ip="$1"
+  local new_domain="$2"
+  [[ -f "$STATE_FILE" ]] || return 0
+
+  # Source the state file to get the current saved config
+  # shellcheck source=/dev/null
+  source "$STATE_FILE"
+
+  # Check if the new config matches the currently active one
+  local current_ip="" current_domain=""
+  case "$(uname -s)" in
+  Linux)
+    current_ip="$(get_current_dns "$IFACE")"
+    current_domain="$(get_current_domains "$IFACE")"
+    if [[ "$current_ip" == "$new_ip" && "$current_domain" == "~$new_domain" ]]; then
+      echo "bm-dns-setup is already active with the same configuration. Nothing to do."
+      exit 0
+    fi
+    ;;
+  Darwin)
+    if [[ -f "/etc/resolver/$IFACE" ]]; then
+      current_ip="$(awk '/^nameserver/{print $2; exit}' "/etc/resolver/$IFACE")"
+    fi
+    current_domain="$IFACE"
+    if [[ "$current_ip" == "$new_ip" && "$current_domain" == "$new_domain" ]]; then
+      echo "bm-dns-setup is already active with the same configuration. Nothing to do."
+      exit 0
+    fi
+    ;;
+  esac
+
+  echo "bm-dns-setup is already active with the following config:"
+  echo ""
+  run_status
+  echo ""
+  echo "New config requested: IP=$new_ip, Domain=$new_domain"
+  echo ""
+
+  local answer
+  read -r -p "Do you want to disable the current config and apply the new one? [y/N] " answer
+  case "$answer" in
+  [yY])
+    echo ""
+    run_disable
+    echo ""
+    ;;
+  *)
+    echo "Keeping current config. No changes made."
+    exit 0
+    ;;
+  esac
 }
 
 # --- Linux helpers (resolvectl) ---
@@ -111,7 +191,7 @@ get_current_domains() {
 enable_linux() {
   local ip="$1"
   local domain="$2"
-  [[ ! -f "$STATE_FILE" ]] || die "bm-dns-setup is already active. Run 'disable' first or 'status' to check."
+  check_already_active "$ip" "$domain"
   local iface
   iface="$(get_interface "$ip")"
   echo "Detected interface: $iface"
@@ -165,7 +245,7 @@ disable_linux() {
 enable_macos() {
   local ip="$1"
   local domain="$2"
-  [[ ! -f "$STATE_FILE" ]] || die "bm-dns-setup is already active. Run 'disable' first or 'status' to check."
+  check_already_active "$ip" "$domain"
   local orig_resolver=""
   if [[ -f "/etc/resolver/$domain" ]]; then
     orig_resolver="$(cat "/etc/resolver/$domain")"
@@ -308,9 +388,10 @@ enable)
     echo "$USAGE" >&2
     exit 1
   }
-  IP="$1"
+  HOST="$1"
   shift
   parse_options "$@"
+  IP="$(resolve_host "$HOST")"
   validate_ip "$IP"
   validate_domain "$DOMAIN"
   run_enable "$IP" "$DOMAIN"
