@@ -720,7 +720,8 @@ class VMWareProvider(BaseProvider):
             # No subdirectory: "[datastore1] file.vmx" -> "[datastore1] "
             idx = vm_path_name.find("]")
             if idx < 0:
-                raise ValueError(f"Malformed vmPathName (missing ']'): {vm_path_name}")
+                self.log.error(f"VM {vm.name} has malformed vmPathName (missing ']'): {vm_path_name}")
+                return True
             vm_folder = vm_path_name[: idx + 1] + " "
         vm_datastore_info = vm.datastore[0].browser.SearchSubFolders(vm_folder, search_spec)
         if vm_datastore_info.info.state == "error":
