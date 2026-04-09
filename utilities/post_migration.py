@@ -156,21 +156,17 @@ def _parse_windows_network_config(ipconfig_output: str) -> dict[str, dict[str, A
         interface_name = adapter.get("name", "unknown")
 
         ip_addresses: list[dict[str, Any]] = []
-        subnet_mask = ""
 
         for ipv4 in adapter.get("ipv4_addresses", []):
             ip_addresses.append({
                 "ip_address": ipv4.get("address", ""),
+                "subnet_mask": ipv4.get("subnet_mask", ""),
                 "status": ipv4.get("status", ""),
             })
-            # Use first subnet mask found
-            if not subnet_mask and ipv4.get("subnet_mask"):
-                subnet_mask = ipv4.get("subnet_mask", "")
 
         interface_config: dict[str, Any] = {
             "name": interface_name,
             "ip_addresses": ip_addresses,
-            "subnet_mask": subnet_mask,
         }
 
         # Add MAC address if available
@@ -213,8 +209,14 @@ def _parse_linux_network_config(nmcli_output: str) -> dict[str, dict[str, Any]]:
 
         interfaces[device["device"]] = {
             "name": device["device"],
-            "ip_addresses": [{"ip_address": str(ipaddress.ip_interface(c).ip), "status": ""} for c in cidrs],
-            "subnet_mask": str(ipaddress.ip_interface(cidrs[0]).netmask),
+            "ip_addresses": [
+                {
+                    "ip_address": str(ipaddress.ip_interface(c).ip),
+                    "subnet_mask": str(ipaddress.ip_interface(c).netmask),
+                    "status": "",
+                }
+                for c in cidrs
+            ],
             **({"macAddress": device["hwaddr"]} if device.get("hwaddr") else {}),
             **({"gateway": device["ip4_gateway"]} if device.get("ip4_gateway") else {}),
         }
@@ -437,18 +439,19 @@ def check_static_ip_preservation(
                         LOGGER.warning(f"Interface {interface_name} not found yet")
                         return None  # Retry
 
-                    # Check if expected IP is found
+                    # Check if expected IP is found and extract its subnet mask
                     interface_ips = matching_interface.get("ip_addresses", [])
+
+                    for ip_info in interface_ips:
+                        if ip_info.get("ip_address") == expected_ip:
+                            LOGGER.info(f"SUCCESS: Expected IP {expected_ip} found")
+                            if ip_info.get("subnet_mask"):
+                                matching_interface["subnet_mask"] = ip_info["subnet_mask"]
+                            return matching_interface
+
                     all_ips = [ip_info.get("ip_address") for ip_info in interface_ips]
-
-                    found_expected_ip = any(ip_info.get("ip_address") == expected_ip for ip_info in interface_ips)
-
-                    if found_expected_ip:
-                        LOGGER.info(f"SUCCESS: Expected IP {expected_ip} found")
-                        return matching_interface
-                    else:
-                        LOGGER.warning(f"Expected IP {expected_ip} not found yet. Found IPs: {all_ips}")
-                        return None
+                    LOGGER.warning(f"Expected IP {expected_ip} not found yet. Found IPs: {all_ips}")
+                    return None
 
             except CommandExecFailed as e:
                 # Permanent failure - don't retry
