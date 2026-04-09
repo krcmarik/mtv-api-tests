@@ -465,6 +465,7 @@ tests_params: dict = {
                 ]
             }
         },
+        "guest_agent_timeout": 600,
     },
     "test_cold_migration_comprehensive": {
         "virtual_machines": [
@@ -501,6 +502,7 @@ tests_params: dict = {
         },
         "vm_target_namespace": f"mtv-vms-cold-comprehensive-{uuid.uuid4().hex[:4]}",
         "multus_namespace": "default",  # Cross-namespace NAD access
+        "guest_agent_timeout": 600,
     },
     "test_post_hook_retain_failed_vm": {
         "virtual_machines": [
