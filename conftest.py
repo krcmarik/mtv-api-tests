@@ -816,7 +816,7 @@ def multus_network_name(
     Returns:
         dict[str, str]: Dictionary with "name" (base name) and "namespace" (NAD namespace)
     """
-    hash_prefix = generate_class_hash_prefix(request.node.nodeid)
+    hash_prefix = generate_class_hash_prefix(request.node.nodeid, session_uuid=fixture_store["session_uuid"])
     base_name = f"cb-{hash_prefix}"
 
     class_name = request.node.cls.__name__ if request.node.cls else request.node.name
@@ -1028,7 +1028,7 @@ def prepared_plan(
 
         if openshift_source_provider:
             # Generate unique network name for class-based tests
-            hash_prefix = generate_class_hash_prefix(request.node.nodeid)
+            hash_prefix = generate_class_hash_prefix(request.node.nodeid, session_uuid=fixture_store["session_uuid"])
             multus_network_name = f"cb-{hash_prefix}"
 
             # Create NAD for OpenShift source provider
