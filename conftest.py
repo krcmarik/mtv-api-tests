@@ -606,9 +606,16 @@ def virtctl_binary(ocp_admin_client: "DynamicClient") -> Path:
 
 
 @pytest.fixture(scope="session")
-def precopy_interval_forkliftcontroller(ocp_admin_client, mtv_namespace):
-    """
-    Set the snapshots interval in the forklift-controller ForkliftController
+def precopy_interval_forkliftcontroller(
+    ocp_admin_client: "DynamicClient",
+    mtv_namespace: str,
+) -> Generator[None, None, None]:
+    """Set the precopy interval in ForkliftController if not already configured.
+
+    Uses check-and-set without ResourceEditor context manager to avoid
+    restoring the original value on session teardown. This prevents race
+    conditions during parallel execution where one worker's teardown would
+    clobber the precopy interval for other workers still running warm migrations.
     """
     forklift_controller = ForkliftController(
         client=ocp_admin_client,
@@ -617,33 +624,37 @@ def precopy_interval_forkliftcontroller(ocp_admin_client, mtv_namespace):
         ensure_exists=True,
     )
 
-    snapshots_interval = py_config["snapshots_interval"]
+    snapshots_interval = str(py_config["snapshots_interval"])
+
     forklift_controller.wait_for_condition(
         status=forklift_controller.Condition.Status.TRUE,
         condition=forklift_controller.Condition.Type.RUNNING,
         timeout=300,
     )
 
+    current_interval = getattr(forklift_controller.instance.spec, "controller_precopy_interval", None)
+
+    if str(current_interval) == snapshots_interval:
+        LOGGER.info(
+            f"ForkliftController controller_precopy_interval already set to {snapshots_interval}, skipping update"
+        )
+        yield
+        return
+
     LOGGER.info(
-        f"Updating forklift-controller ForkliftController CR with snapshots interval={snapshots_interval} seconds"
+        f"Setting ForkliftController controller_precopy_interval from {current_interval!r} to {snapshots_interval}"
+    )
+    ResourceEditor(patches={forklift_controller: {"spec": {"controller_precopy_interval": snapshots_interval}}}).update(
+        backup_resources=False
     )
 
-    with ResourceEditor(
-        patches={
-            forklift_controller: {
-                "spec": {
-                    "controller_precopy_interval": str(snapshots_interval),
-                }
-            }
-        }
-    ):
-        forklift_controller.wait_for_condition(
-            status=forklift_controller.Condition.Status.TRUE,
-            condition=forklift_controller.Condition.Type.SUCCESSFUL,
-            timeout=300,
-        )
+    forklift_controller.wait_for_condition(
+        status=forklift_controller.Condition.Status.TRUE,
+        condition=forklift_controller.Condition.Type.SUCCESSFUL,
+        timeout=300,
+    )
 
-        yield
+    yield
 
 
 @pytest.fixture(scope="session")
