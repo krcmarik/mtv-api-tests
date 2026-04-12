@@ -269,7 +269,10 @@ def _verify_subnet_mask(interface_name: str, expected_subnet: str, matching_inte
     """
     subnet_mask = matching_interface.get("subnet_mask")
     if not subnet_mask:
-        return
+        raise AssertionError(
+            f"Subnet mask not found for interface {interface_name} — "
+            f"expected {expected_subnet} but no subnet mask was reported by the guest OS"
+        )
 
     try:
         # Create network objects to compare subnet masks
@@ -445,8 +448,7 @@ def check_static_ip_preservation(
                     for ip_info in interface_ips:
                         if ip_info.get("ip_address") == expected_ip:
                             LOGGER.info(f"SUCCESS: Expected IP {expected_ip} found")
-                            if ip_info.get("subnet_mask"):
-                                matching_interface["subnet_mask"] = ip_info["subnet_mask"]
+                            matching_interface["subnet_mask"] = ip_info.get("subnet_mask", "")
                             return matching_interface
 
                     all_ips = [ip_info.get("ip_address") for ip_info in interface_ips]
