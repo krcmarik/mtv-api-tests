@@ -381,7 +381,7 @@ def check_static_ip_preservation(
         # Get current network configuration via SSH with retry logic It takes time for secondary IPs to appear
         ssh_conn = vm_ssh_connections.create(vm_name=vm_name, username=ssh_username, password=ssh_password)
 
-        def get_matching_interface_with_ip():
+        def get_matching_interface_with_ip(expected_ip: str = expected_ip) -> dict[str, Any] | None:
             """
             Combined function that:
             1. Gets network configuration
@@ -400,7 +400,7 @@ def check_static_ip_preservation(
 
                     # Execute command using executor with the correct user
                     # We need to use the executor with our specific user instead
-                    executor = ssh_conn.rrmngmnt_host.executor(user=ssh_conn.rrmngmnt_user)
+                    executor = ssh_conn.rrmngmnt_host.executor(user=ssh_conn.rrmngmnt_user)  # type: ignore[union-attr]
                     executor.port = ssh_conn.local_port
 
                     # Run the command directly
