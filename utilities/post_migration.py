@@ -1184,6 +1184,7 @@ def check_vms(
 
     for vm in plan["virtual_machines"]:
         vm_name = vm["name"]
+        destination_vm_name = vm.get("targetName", vm_name)
         res[vm_name] = []
 
         source_vm = source_provider.vm_dict(
@@ -1195,7 +1196,7 @@ def check_vms(
         vm_guest_agent = vm.get("guest_agent")
         vm_kwargs = {
             "wait_for_guest_agent": vm_guest_agent,
-            "name": vm_name,
+            "name": destination_vm_name,
             "namespace": vm_namespace,
         }
         if (guest_agent_timeout := plan.get("guest_agent_timeout")) is not None:
@@ -1223,7 +1224,7 @@ def check_vms(
         if vm_ssh_connections and destination_vm.get("power_state") == "on":
             try:
                 check_ssh_connectivity(
-                    vm_name=vm_name,
+                    vm_name=destination_vm_name,
                     vm_ssh_connections=vm_ssh_connections,
                     source_provider_data=source_provider_data,
                     source_vm_info=source_vm,
@@ -1249,7 +1250,7 @@ def check_vms(
             ):
                 try:
                     check_static_ip_preservation(
-                        vm_name=vm_name,
+                        vm_name=destination_vm_name,
                         vm_ssh_connections=vm_ssh_connections,
                         source_vm_data=source_vm_data,
                         source_provider_data=source_provider_data,
