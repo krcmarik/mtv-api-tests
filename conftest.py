@@ -1028,10 +1028,6 @@ def prepared_plan(
                     LOGGER.info(f"Overriding VM name '{vm['name']}' with '{default_vm_override}' from provider config")
                     vm["name"] = default_vm_override
 
-    # OVA provider uses a fixed VM from the OVA file
-    if source_provider.type == Provider.ProviderType.OVA:
-        plan["virtual_machines"] = [{"name": "1nisim-rhel9-efi"}]
-
     if source_provider.type != Provider.ProviderType.OVA:
         openshift_source_provider: bool = source_provider.type == Provider.ProviderType.OPENSHIFT
 
