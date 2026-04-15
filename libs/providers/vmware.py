@@ -1383,6 +1383,251 @@ class VMWareProvider(BaseProvider):
 
         return res
 
+    @staticmethod
+    def _get_bus_number_for_controller_key(
+        vm: vim.VirtualMachine,
+        controller_key: int,
+    ) -> int | None:
+        """Look up the SCSI bus number for a given controller key.
+
+        Args:
+            vm (vim.VirtualMachine): VM whose hardware to search.
+            controller_key (int): The controller device key.
+
+        Returns:
+            int | None: The bus number, or None if no matching SCSI controller found.
+        """
+        for device in vm.config.hardware.device:
+            if isinstance(device, vim.vm.device.VirtualSCSIController) and device.key == controller_key:
+                return device.busNumber
+        return None
+
+    def _find_disk_by_scsi_position(
+        self,
+        vm: vim.VirtualMachine,
+        bus_number: int,
+        unit_number: int,
+    ) -> vim.vm.device.VirtualDisk | None:
+        """Find a VirtualDisk on a VM by its SCSI bus and unit number.
+
+        Args:
+            vm (vim.VirtualMachine): The VM to search.
+            bus_number (int): SCSI bus number (e.g., 0, 1).
+            unit_number (int): SCSI unit number (e.g., 0, 1).
+
+        Returns:
+            vim.vm.device.VirtualDisk | None: The matching disk, or None if not found.
+        """
+        controller_keys_by_bus: dict[int, int] = {}
+        for device in vm.config.hardware.device:
+            if isinstance(device, vim.vm.device.VirtualSCSIController):
+                controller_keys_by_bus[device.busNumber] = device.key
+
+        target_controller_key = controller_keys_by_bus.get(bus_number)
+        if target_controller_key is None:
+            return None
+
+        for device in vm.config.hardware.device:
+            if (
+                isinstance(device, vim.vm.device.VirtualDisk)
+                and device.controllerKey == target_controller_key
+                and device.unitNumber == unit_number
+            ):
+                return device
+
+        return None
+
+    def _build_vmdk_position_map(
+        self,
+        source_vm_names: list[str],
+    ) -> dict[str, list[tuple[int, int, int]]]:
+        """Map each VMDK backing file to its SCSI positions across source VMs.
+
+        Args:
+            source_vm_names (list[str]): Original source VM names.
+
+        Returns:
+            dict[str, list[tuple[int, int, int]]]: vmdk_path -> [(vm_index, bus_number, unit_number)].
+        """
+        source_vms = [self.get_obj([vim.VirtualMachine], name) for name in source_vm_names]
+        vmdk_positions: dict[str, list[tuple[int, int, int]]] = {}
+
+        for vm_idx, source_vm in enumerate(source_vms):
+            for device in source_vm.config.hardware.device:
+                if not isinstance(device, vim.vm.device.VirtualDisk):
+                    continue
+                if not hasattr(device.backing, "fileName"):
+                    continue
+
+                bus_number = self._get_bus_number_for_controller_key(source_vm, device.controllerKey)
+                if bus_number is None:
+                    continue
+
+                vmdk_positions.setdefault(device.backing.fileName, []).append((vm_idx, bus_number, device.unitNumber))
+
+        return vmdk_positions
+
+    @staticmethod
+    def _find_shared_vmdks(
+        vmdk_positions: dict[str, list[tuple[int, int, int]]],
+    ) -> dict[str, list[tuple[int, int, int]]]:
+        """Filter VMDK position map to only disks shared across multiple VMs.
+
+        Args:
+            vmdk_positions (dict[str, list[tuple[int, int, int]]]): Full VMDK position map.
+
+        Returns:
+            dict[str, list[tuple[int, int, int]]]: Only entries where the VMDK is used by 2+ VMs.
+        """
+        return {
+            path: positions
+            for path, positions in vmdk_positions.items()
+            if len({vm_idx for vm_idx, _, _ in positions}) > 1
+        }
+
+    def _relink_consumer_disk(
+        self,
+        consumer_clone: vim.VirtualMachine,
+        consumer_bus: int,
+        consumer_unit: int,
+        owner_vmdk: str,
+    ) -> str:
+        """Reconfigure a consumer clone's disk to point to the owner's VMDK.
+
+        Args:
+            consumer_clone (vim.VirtualMachine): The consumer clone VM.
+            consumer_bus (int): SCSI bus number of the shared disk on the consumer.
+            consumer_unit (int): SCSI unit number of the shared disk on the consumer.
+            owner_vmdk (str): Datastore path of the owner clone's VMDK.
+
+        Returns:
+            str: The old VMDK path that was replaced (now orphaned).
+
+        Raises:
+            VmCloneError: If the expected disk is not found on the consumer clone.
+        """
+        consumer_disk = self._find_disk_by_scsi_position(consumer_clone, consumer_bus, consumer_unit)
+        if not consumer_disk:
+            raise VmCloneError(
+                f"Expected shared disk not found on consumer clone '{consumer_clone.name}' "
+                f"at SCSI({consumer_bus}:{consumer_unit})"
+            )
+
+        old_vmdk = consumer_disk.backing.fileName
+        LOGGER.info(f"Relinking '{consumer_clone.name}' shared disk: {old_vmdk} -> {owner_vmdk}")
+
+        disk_spec = vim.vm.device.VirtualDeviceSpec()
+        disk_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.edit
+        disk_spec.device = consumer_disk
+        disk_spec.device.backing.fileName = owner_vmdk
+
+        config_spec = vim.vm.ConfigSpec()
+        config_spec.deviceChange = [disk_spec]
+
+        task = consumer_clone.ReconfigVM_Task(spec=config_spec)
+        self.wait_task(task=task, action_name=f"Relinking shared disk on '{consumer_clone.name}'")
+        LOGGER.info(f"Successfully relinked shared disk on '{consumer_clone.name}'")
+
+        return old_vmdk
+
+    def relink_shared_disks(
+        self,
+        source_vm_names: list[str],
+        cloned_vms: list[vim.VirtualMachine],
+    ) -> None:
+        """Reconfigure cloned VMs to preserve shared disk relationships from source VMs.
+
+        When VMs with shared disks are cloned, VMware creates independent copies of all disks,
+        breaking the shared disk relationship. This method identifies shared disks between source
+        VMs (same backing VMDK file) and reconfigures the clones so they share a single VMDK copy.
+
+        The first clone keeps its independent copy (owner). Subsequent clones are reconfigured
+        to point to the owner clone's VMDK.
+
+        Args:
+            source_vm_names (list[str]): Original source/template VM names (before cloning).
+            cloned_vms (list[vim.VirtualMachine]): Cloned VM objects, in the same order as source_vm_names.
+
+        Raises:
+            ValueError: If source_vm_names and cloned_vms have different lengths.
+        """
+        if len(source_vm_names) != len(cloned_vms):
+            raise ValueError(
+                f"source_vm_names ({len(source_vm_names)}) and cloned_vms ({len(cloned_vms)}) must have same length"
+            )
+
+        if len(source_vm_names) < 2:
+            LOGGER.debug("Only one VM, no shared disk relinking needed")
+            return
+
+        vmdk_positions = self._build_vmdk_position_map(source_vm_names)
+        shared_vmdks = self._find_shared_vmdks(vmdk_positions)
+
+        if not shared_vmdks:
+            LOGGER.info("No shared disks detected between source VMs, skipping relink")
+            return
+
+        LOGGER.info(f"Found {len(shared_vmdks)} shared disk(s) between source VMs")
+
+        for shared_vmdk_path, positions in shared_vmdks.items():
+            LOGGER.info(f"Processing shared VMDK: {shared_vmdk_path}")
+
+            # First VM's clone is the owner (keeps its independent disk copy)
+            owner_idx, owner_bus, owner_unit = positions[0]
+            owner_clone = cloned_vms[owner_idx]
+
+            owner_disk = self._find_disk_by_scsi_position(owner_clone, owner_bus, owner_unit)
+            if not owner_disk:
+                raise VmCloneError(
+                    f"Expected shared disk not found on owner clone '{owner_clone.name}' "
+                    f"at SCSI({owner_bus}:{owner_unit})"
+                )
+
+            owner_vmdk = owner_disk.backing.fileName
+            LOGGER.info(f"Owner clone '{owner_clone.name}' shared disk VMDK: {owner_vmdk}")
+
+            for consumer_idx, consumer_bus, consumer_unit in positions[1:]:
+                consumer_clone = cloned_vms[consumer_idx]
+                old_vmdk = self._relink_consumer_disk(
+                    consumer_clone=consumer_clone,
+                    consumer_bus=consumer_bus,
+                    consumer_unit=consumer_unit,
+                    owner_vmdk=owner_vmdk,
+                )
+                if self.fixture_store:
+                    self.fixture_store["teardown"].setdefault("orphaned_vmdks_to_reattach", []).append({
+                        "vm_name": consumer_clone.name,
+                        "vmdk_path": old_vmdk,
+                        "bus_number": consumer_bus,
+                        "unit_number": consumer_unit,
+                    })
+
+    def reattach_orphaned_vmdk(self, vm_name: str, vmdk_path: str, bus_number: int, unit_number: int) -> None:
+        """Reattach an orphaned VMDK to a VM at its original SCSI position.
+
+        After migration, the consumer clone's shared disk points to the owner's VMDK.
+        This reattaches the consumer's original (orphaned) VMDK back, so that normal
+        VM deletion cleans it up automatically — no separate VMDK cleanup needed.
+
+        Reuses ``_relink_consumer_disk`` which already handles the ReconfigVM_Task
+        pattern for changing a disk's backing VMDK at a given SCSI position.
+
+        Args:
+            vm_name (str): Name of the consumer clone VM.
+            vmdk_path (str): Datastore path of the orphaned VMDK.
+            bus_number (int): Original SCSI bus number of the shared disk.
+            unit_number (int): Original SCSI unit number of the shared disk.
+        """
+        self.reconnect_if_not_connected
+        vm = self.get_obj([vim.VirtualMachine], vm_name)
+        self._relink_consumer_disk(
+            consumer_clone=vm,
+            consumer_bus=bus_number,
+            consumer_unit=unit_number,
+            owner_vmdk=vmdk_path,
+        )
+        LOGGER.info(f"Reattached orphaned VMDK to '{vm_name}': {vmdk_path}")
+
     def delete_vm(self, vm_name: str) -> None:
         vm = self.get_obj(vimtype=[vim.VirtualMachine], name=vm_name)
         self.stop_vm(vm=vm)

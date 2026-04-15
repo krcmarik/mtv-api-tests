@@ -321,14 +321,12 @@ def pytest_collection_modifyitems(session, config, items):
                     if "warm" in item.keywords:
                         item.add_marker(pytest.mark.jira("MTV-2846", run=False))
 
-            # Skip copy-offload tests for non-vSphere providers (vSphere-only feature).
+            # Skip vSphere-only tests for non-vSphere providers.
             if source_provider_type != Provider.ProviderType.VSPHERE:
-                copyoffload_skip = pytest.mark.skip(
-                    reason="Copy-offload tests are only applicable to vSphere source providers"
-                )
+                vsphere_only_skip = pytest.mark.skip(reason="Test is only applicable to vSphere source providers")
                 for item in items:
-                    if "copyoffload" in item.keywords:
-                        item.add_marker(copyoffload_skip)
+                    if "copyoffload" in item.keywords or "shared_disk" in item.keywords:
+                        item.add_marker(vsphere_only_skip)
 
     _session_store = get_fixture_store(session)
     vms_for_current_session: set = set()
@@ -1060,6 +1058,23 @@ def prepared_plan(
         # Use vCenter clone provider if configured (e.g., for ESXi sources that can't clone directly)
         clone_provider = vcenter_clone_provider or source_provider
 
+        # Track original VM names and cloned objects for shared disk relinking.
+        # Check for `is not None` because the field can be True (owner) or False (consumer),
+        # and both need relinking. We only skip VMs without this field at all.
+        plan_level_shared_disks = bool(plan.get("migrate_shared_disks"))
+        has_shared_disk_config = plan_level_shared_disks or any(
+            vm.get("migrate_shared_disks") is not None for vm in virtual_machines
+        )
+        # Fail early before cloning if shared-disk relinking is requested on an unsupported provider.
+        if has_shared_disk_config and not isinstance(source_provider, VMWareProvider):
+            raise ValueError(
+                f"Shared-disk migration requested, but provider '{source_provider.type}' "
+                "does not implement relink_shared_disks"
+            )
+
+        original_source_vm_names: list[str] = [vm["name"] for vm in virtual_machines] if has_shared_disk_config else []
+        cloned_vm_objects: list[Any] = []
+
         for vm in virtual_machines:
             clone_options = {**vm, "enable_ctk": warm_migration}
             provider_vm_api = clone_provider.get_vm_by_name(
@@ -1069,6 +1084,8 @@ def prepared_plan(
                 session_uuid=fixture_store["session_uuid"],
                 clone_options=clone_options,
             )
+            if has_shared_disk_config:
+                cloned_vm_objects.append(provider_vm_api)
 
             # Power state control: "on" = start VM, "off" = stop VM, not set = leave unchanged
             source_vm_power = vm.get("source_vm_power")  # Optional - if not set, VM power state unchanged
@@ -1128,6 +1145,15 @@ def prepared_plan(
                         f"Failed to detect IP origins via Guest Operations for VM {vm['name']}: {e}. "
                         "Static IP verification may not work for this VM."
                     )
+
+        # Relink shared disks between clones (VMware-specific)
+        # When VMs with shared disks are cloned, each clone gets independent disk copies,
+        # breaking the shared disk relationship. This restores it on the clones.
+        if has_shared_disk_config:
+            clone_provider.relink_shared_disks(
+                source_vm_names=original_source_vm_names,
+                cloned_vms=cloned_vm_objects,
+            )
     else:
         # OVA VMs aren't cloned — add unique targetName to prevent destination VM name conflicts
         # across parallel test sessions. The source VM name stays unchanged (must match OVA file).
@@ -1140,6 +1166,27 @@ def prepared_plan(
     create_hook_if_configured(plan, "post_hook", "post", fixture_store, ocp_admin_client, target_namespace)
 
     yield plan
+
+    # Reattach orphaned VMDKs to consumer clones so normal VM deletion cleans them up.
+    # During relink, consumer clones' shared disks are redirected to the owner's VMDK,
+    # leaving the consumer's original VMDK orphaned. Reattaching it here means
+    # teardown's delete_vm will automatically remove it — no separate VMDK cleanup needed.
+    vmdks_to_reattach: list[dict[str, Any]] = fixture_store["teardown"].pop("orphaned_vmdks_to_reattach", [])
+    if vmdks_to_reattach:
+        reattach_provider = vcenter_clone_provider or source_provider
+        for vmdk_info in vmdks_to_reattach:
+            try:
+                reattach_provider.reattach_orphaned_vmdk(
+                    vm_name=vmdk_info["vm_name"],
+                    vmdk_path=vmdk_info["vmdk_path"],
+                    bus_number=vmdk_info["bus_number"],
+                    unit_number=vmdk_info["unit_number"],
+                )
+            except Exception:
+                LOGGER.warning(
+                    f"Failed to reattach VMDK '{vmdk_info['vmdk_path']}' to '{vmdk_info['vm_name']}', "
+                    "VMDK may need manual cleanup"
+                )
 
     # Note: VMs are cleaned up by cleanup_migrated_vms at class scope.
     # Session-level registration is intentionally omitted to prevent double cleanup.
