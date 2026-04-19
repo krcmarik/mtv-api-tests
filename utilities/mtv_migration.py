@@ -143,6 +143,7 @@ def create_plan_resource(
     target_affinity: dict[str, Any] | None = None,
     vm_target_namespace: str | None = None,
     migrate_shared_disks: bool | None = None,
+    xfs_compatibility: bool | None = None,
     target_power_state: str | None = None,
 ) -> Plan:
     """Create MTV Plan CR resource.
@@ -176,6 +177,8 @@ def create_plan_resource(
         vm_target_namespace (str | None): Custom target namespace for VMs. Defaults to None.
         migrate_shared_disks (bool | None): Whether to migrate shared disks at plan level. True enables shared disk
             migration for all VMs by default. Individual VMs can override via per-VM migrateSharedDisks. Defaults to None.
+        xfs_compatibility (bool | None): Whether to use XFS-compatible virt-v2v image. Enables XFSv4 filesystem
+            support for this plan. Warning: drops BTRFS support when enabled. Defaults to None.
         target_power_state (str | None): Target power state for VMs after migration (e.g., 'on', 'off'). Defaults to None.
 
     Returns:
@@ -240,6 +243,9 @@ def create_plan_resource(
 
     if migrate_shared_disks is not None:
         plan_kwargs["migrate_shared_disks"] = migrate_shared_disks
+
+    if xfs_compatibility is not None:
+        plan_kwargs["xfs_compatibility"] = xfs_compatibility
 
     # Add copy-offload specific parameters if enabled
     if copyoffload:

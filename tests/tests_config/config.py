@@ -51,6 +51,7 @@ tests_params: dict = {
             {"name": "mtv-tests-rhel8", "guest_agent": True},
         ],
         "warm_migration": False,
+        "xfs_compatibility": True,
     },
     "test_cold_remote_ocp": {
         "virtual_machines": [

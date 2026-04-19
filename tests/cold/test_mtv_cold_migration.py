@@ -105,6 +105,7 @@ class TestSanityColdMtvMigration:
             virtual_machines_list=prepared_plan["virtual_machines"],
             target_namespace=target_namespace,
             warm_migration=prepared_plan.get("warm_migration", False),
+            xfs_compatibility=prepared_plan["xfs_compatibility"],
         )
         assert self.plan_resource, "Plan creation failed"
 
