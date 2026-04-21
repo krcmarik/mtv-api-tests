@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from utilities.ssh_utils import SSHConnectionManager
 
 
-@pytest.mark.tier0
 @pytest.mark.warm
 @pytest.mark.incremental
 @pytest.mark.parametrize(

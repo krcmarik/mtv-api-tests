@@ -15,7 +15,6 @@ from utilities.post_migration import check_vms
 from utilities.utils import get_value_from_py_config, populate_vm_ids
 
 
-@pytest.mark.tier0
 @pytest.mark.warm
 @pytest.mark.incremental
 @pytest.mark.parametrize(

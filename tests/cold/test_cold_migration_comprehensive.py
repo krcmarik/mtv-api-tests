@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 )
 @pytest.mark.usefixtures("cleanup_migrated_vms")
 @pytest.mark.incremental
-@pytest.mark.tier0
 class TestColdMigrationComprehensive:
     """Comprehensive cold migration test covering multiple features.
 
