@@ -172,16 +172,16 @@ def run_must_gather(data_collector_path: Path, plan: dict[str, str] | None = Non
 
         _must_gather_base_cmd = f"oc adm must-gather --image={must_gather_image} --dest-dir={data_collector_path}"
 
-        if plan:
-            plan_name = plan["name"]
-            plan_namespace = plan["namespace"]
-            LOGGER.info(f"Running targeted must-gather for plan '{plan_name}' in namespace '{plan_namespace}'")
-            run_command(
-                shlex.split(f"{_must_gather_base_cmd} -- NS={plan_namespace} PLAN={plan_name} /usr/bin/targeted"),
-                verify_stderr=False,
-            )
-        else:
-            LOGGER.info("Running full must-gather collection")
-            run_command(shlex.split(_must_gather_base_cmd), verify_stderr=False)
+        # if plan:
+        #     plan_name = plan["name"]
+        #     plan_namespace = plan["namespace"]
+        #     LOGGER.info(f"Running targeted must-gather for plan '{plan_name}' in namespace '{plan_namespace}'")
+        #     run_command(
+        #         shlex.split(f"{_must_gather_base_cmd} -- NS={plan_namespace} PLAN={plan_name} /usr/bin/targeted"),
+        #         verify_stderr=False,
+        #     )
+        # else:
+        LOGGER.info("Running full must-gather collection")
+        run_command(shlex.split(_must_gather_base_cmd), verify_stderr=False)
     except Exception as ex:
         LOGGER.exception(f"Failed to run must-gather. {ex}")
