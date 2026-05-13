@@ -13,6 +13,10 @@ remote_ocp_cluster: str = ""
 snapshots_interval: int = 2
 mins_before_cutover: int = 5
 plan_wait_timeout: int = 3600
+upgrade_script_path: str = ""
+mtv_upgrade_to_version: str = ""
+mtv_upgrade_to_source: str = ""
+mtv_upgrade_image_index: str = ""
 
 tests_params: dict = {
     "test_sanity_warm_mtv_migration": {
@@ -575,6 +579,12 @@ tests_params: dict = {
         "migrate_shared_disks": True,
         "shared_disk_device": "/dev/vdc",
         "target_power_state": "on",
+    },
+    "test_upgrade_cold_migration": {
+        "virtual_machines": [
+            {"name": "mtv-tests-rhel8", "guest_agent": True},
+        ],
+        "warm_migration": False,
     },
 }
 
