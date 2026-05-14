@@ -61,6 +61,8 @@ def run_mtv_upgrade(
     """
     if not script_path:
         raise ValueError("script_path must be provided via --tc=upgrade_script_path:<path>")
+    if not os.path.isfile(script_path):
+        raise ValueError(f"Upgrade script not found at path: {script_path}")
     if not mtv_version:
         raise ValueError("mtv_version must be provided via --tc=mtv_upgrade_to_version:<version>")
     if not mtv_source:
