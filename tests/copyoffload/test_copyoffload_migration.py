@@ -116,7 +116,6 @@ class TestCopyoffloadThinMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -320,7 +319,6 @@ class CopyoffloadSnapshotBase:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -625,7 +623,6 @@ class TestCopyoffloadThickLazyMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -794,7 +791,6 @@ class TestCopyoffloadThickEagerMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -962,7 +958,177 @@ class TestCopyoffloadMultiDiskMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
+            volume_mode="Block",
+        )
+        assert self.storage_map, "StorageMap creation failed"
+
+    def test_create_networkmap(
+        self,
+        prepared_plan,
+        fixture_store,
+        ocp_admin_client,
+        source_provider,
+        destination_provider,
+        source_provider_inventory,
+        target_namespace,
+        multus_network_name,
+    ):
+        """Create NetworkMap resource."""
+        vms_names = [vm["name"] for vm in prepared_plan["virtual_machines"]]
+        self.__class__.network_map = get_network_migration_map(
+            fixture_store=fixture_store,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            source_provider_inventory=source_provider_inventory,
+            ocp_admin_client=ocp_admin_client,
+            multus_network_name=multus_network_name,
+            target_namespace=target_namespace,
+            vms=vms_names,
+        )
+        assert self.network_map, "NetworkMap creation failed"
+
+    def test_create_plan(
+        self,
+        prepared_plan,
+        fixture_store,
+        ocp_admin_client,
+        source_provider,
+        destination_provider,
+        target_namespace,
+        source_provider_inventory,
+    ):
+        """Create MTV Plan CR resource."""
+        for vm in prepared_plan["virtual_machines"]:
+            vm_name = vm["name"]
+            vm_data = source_provider_inventory.get_vm(vm_name)
+            vm["id"] = vm_data["id"]
+
+        self.__class__.plan_resource = create_plan_resource(
+            ocp_admin_client=ocp_admin_client,
+            fixture_store=fixture_store,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            storage_map=self.storage_map,
+            network_map=self.network_map,
+            virtual_machines_list=prepared_plan["virtual_machines"],
+            target_namespace=target_namespace,
+            warm_migration=prepared_plan.get("warm_migration", False),
+            copyoffload=prepared_plan.get("copyoffload", False),
+        )
+        assert self.plan_resource, "Plan creation failed"
+
+    def test_migrate_vms(self, fixture_store, ocp_admin_client, target_namespace):
+        """Execute migration."""
+        execute_migration(
+            ocp_admin_client=ocp_admin_client,
+            fixture_store=fixture_store,
+            plan=self.plan_resource,
+            target_namespace=target_namespace,
+        )
+
+    def test_check_xcopy_used(self, ocp_admin_client: DynamicClient, target_namespace: str) -> None:
+        """Verify XCOPY acceleration was used for all disks.
+
+        Args:
+            ocp_admin_client (DynamicClient): OpenShift admin client.
+            target_namespace (str): Namespace where populate pods exist.
+        """
+        verify_xcopy_used(
+            ocp_admin_client=ocp_admin_client,
+            plan=self.plan_resource,
+            target_namespace=target_namespace,
+            expected_xcopy_used=True,
+        )
+
+    def test_check_vms(
+        self,
+        prepared_plan,
+        source_provider,
+        destination_provider,
+        source_provider_data,
+        target_namespace,
+        source_vms_namespace,
+        source_provider_inventory,
+        vm_ssh_connections,
+    ):
+        """Validate migrated VMs and verify disk count."""
+        check_vms(
+            plan=prepared_plan,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            network_map_resource=self.network_map,
+            storage_map_resource=self.storage_map,
+            source_provider_data=source_provider_data,
+            source_vms_namespace=source_vms_namespace,
+            source_provider_inventory=source_provider_inventory,
+            vm_ssh_connections=vm_ssh_connections,
+        )
+        verify_vm_disk_count(
+            destination_provider=destination_provider, plan=prepared_plan, target_namespace=target_namespace
+        )
+
+
+@pytest.mark.vsphere
+@pytest.mark.copyoffload
+@pytest.mark.incremental
+@pytest.mark.parametrize(
+    "class_plan_config",
+    [pytest.param(py_config["tests_params"]["test_copyoffload_dual_disk_mixed_thin_thick_migration"])],
+    indirect=True,
+    ids=["MTV-584:copyoffload-dual-disk-mixed-thin-thick"],
+)
+@pytest.mark.usefixtures(
+    "vmware_cloud_init_ready",
+    "multus_network_name",
+    "copyoffload_config",
+    "copyoffload_ssh_key",
+    "cleanup_migrated_vms",
+)
+class TestCopyoffloadDualDiskMixedThinThickMigration:
+    """Copy-offload migration (MTV-584): dual-disk VM with thin + thick-lazy provisioning."""
+
+    storage_map: StorageMap
+    network_map: NetworkMap
+    plan_resource: Plan
+
+    def test_create_storagemap(
+        self,
+        prepared_plan,
+        fixture_store,
+        ocp_admin_client,
+        source_provider,
+        destination_provider,
+        source_provider_inventory,
+        target_namespace,
+        source_provider_data,
+        copyoffload_storage_secret,
+    ):
+        """Create StorageMap with copy-offload configuration."""
+        copyoffload_config_data = source_provider_data["copyoffload"]
+        storage_vendor_product = copyoffload_config_data["storage_vendor_product"]
+        datastore_id = copyoffload_config_data["datastore_id"]
+        storage_class = py_config["storage_class"]
+
+        vms_names = [vm["name"] for vm in prepared_plan["virtual_machines"]]
+
+        offload_plugin_config = {
+            "vsphereXcopyConfig": {
+                "secretRef": copyoffload_storage_secret.name,
+                "storageVendorProduct": storage_vendor_product,
+            }
+        }
+
+        self.__class__.storage_map = get_storage_migration_map(
+            fixture_store=fixture_store,
+            target_namespace=target_namespace,
+            source_provider=source_provider,
+            destination_provider=destination_provider,
+            ocp_admin_client=ocp_admin_client,
+            source_provider_inventory=source_provider_inventory,
+            vms=vms_names,
+            storage_class=storage_class,
+            datastore_id=datastore_id,
+            offload_plugin_config=offload_plugin_config,
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -1134,7 +1300,6 @@ class TestCopyoffloadMultiDiskDifferentPathMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -1305,7 +1470,6 @@ class TestCopyoffloadRdmVirtualDiskMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -1483,7 +1647,6 @@ class TestCopyoffloadMultiDatastoreMigration:
             datastore_id=datastore_id,
             secondary_datastore_id=secondary_datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -1669,7 +1832,6 @@ class TestCopyoffloadMixedDatastoreMigration:
             datastore_id=datastore_id,
             non_xcopy_datastore_id=non_xcopy_datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -1864,7 +2026,6 @@ class TestCopyoffloadFallbackLargeMigration:
             datastore_id=datastore_id,
             non_xcopy_datastore_id=non_xcopy_datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -2097,7 +2258,6 @@ class TestCopyoffloadIndependentPersistentDiskMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -2265,7 +2425,6 @@ class TestCopyoffloadIndependentNonpersistentDiskMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -2432,7 +2591,6 @@ class TestCopyoffload10MixedDisksMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -2598,7 +2756,6 @@ class TestCopyoffloadLargeVmMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -2796,7 +2953,6 @@ class TestCopyoffloadNonconformingNameMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -3010,7 +3166,6 @@ class TestCopyoffloadWarmMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -3185,7 +3340,6 @@ class TestCopyoffloadScaleMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map, "StorageMap creation failed"
@@ -3375,7 +3529,6 @@ class TestSimultaneousCopyoffloadMigrations:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map_1, "StorageMap creation failed for plan 1"
@@ -3436,7 +3589,6 @@ class TestSimultaneousCopyoffloadMigrations:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map_2, "StorageMap creation failed for plan 2"
@@ -3874,7 +4026,6 @@ class TestConcurrentXcopyVddkMigration:
             storage_class=storage_class,
             datastore_id=datastore_id,
             offload_plugin_config=offload_plugin_config,
-            access_mode="ReadWriteOnce",
             volume_mode="Block",
         )
         assert self.storage_map_xcopy, "StorageMap creation failed for XCOPY plan"
