@@ -30,7 +30,7 @@ LOGGER = get_logger(name=__name__)
 
 
 @contextmanager
-def _duplicate_stdout_to_fd3() -> Generator[None]:
+def _duplicate_stdout_to_fd3() -> Generator[None, None, None]:
     """Duplicate stdout to fd 3"""
     os.dup2(1, 3)
     try:

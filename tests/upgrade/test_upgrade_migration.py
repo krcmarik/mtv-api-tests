@@ -200,7 +200,6 @@ class TestUpgradeColdMigration:
         source_provider: BaseProvider,
         destination_provider: BaseProvider,
         source_provider_data: dict[str, Any],
-        target_namespace: str,
         source_vms_namespace: str,
         source_provider_inventory: ForkliftInventory,
         vm_ssh_connections: SSHConnectionManager | None,
