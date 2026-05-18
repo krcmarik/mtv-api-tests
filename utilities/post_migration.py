@@ -399,6 +399,111 @@ def _verify_gateway(interface_name: str, expected_gateway: str, matching_interfa
         )
 
 
+def _load_current_interfaces(
+    ssh_conn: Any,
+    network_cmd: list[str],
+    is_windows: bool,
+    vm_name: str,
+) -> dict[str, dict[str, Any]] | None:
+    """Run a network command over SSH and parse the guest's interface configuration.
+
+    Args:
+        ssh_conn: SSH connection object with rrmngmnt_host/rrmngmnt_user/local_port
+        network_cmd (list[str]): Command to run (e.g. ['nmcli', 'device', 'show'])
+        is_windows (bool): True to parse ipconfig output, False for nmcli
+        vm_name (str): VM name used in log messages
+
+    Returns:
+        dict[str, dict[str, Any]] | None: Parsed interfaces keyed by name, or None to signal retry
+
+    Raises:
+        CommandExecFailed: If the network command exits with a non-zero code
+    """
+    if not ssh_conn.rrmngmnt_host:
+        LOGGER.warning(f"SSH connection not established for VM {vm_name} - retrying...")
+        return None
+
+    executor = ssh_conn.rrmngmnt_host.executor(user=ssh_conn.rrmngmnt_user)
+    executor.port = ssh_conn.local_port
+    rc, stdout, err = executor.run_cmd(network_cmd)
+    if rc != 0:
+        raise CommandExecFailed(name=" ".join(network_cmd), err=err)
+
+    if not stdout.strip():
+        LOGGER.warning(f"{' '.join(network_cmd)} returned empty output")
+        return None
+
+    return _parse_windows_network_config(stdout) if is_windows else _parse_linux_network_config(stdout)
+
+
+def _match_expected_static_ips(
+    current_interfaces: dict[str, dict[str, Any]],
+    static_interfaces: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Match expected static-IP interfaces against the guest's current interfaces.
+
+    Uses a phased matching priority: exact MAC match first, then exact name match,
+    then unique substring name match (ambiguous substring matches are skipped).
+
+    Args:
+        current_interfaces (dict[str, dict[str, Any]]): Parsed guest interfaces keyed by name
+        static_interfaces (list[dict[str, Any]]): Expected static-IP entries from source VM data
+
+    Returns:
+        tuple[list[dict[str, Any]], list[str]]: A pair of (matched results, missing descriptions).
+            Each matched result is a shallow copy of the interface config with 'subnet_mask' set.
+    """
+    results: list[dict[str, Any]] = []
+    missing: list[str] = []
+
+    for interface in static_interfaces:
+        interface_name: str = interface["name"]
+        expected_ip: str = interface["ip_address"]
+        source_mac: str = interface.get("macAddress", "").lower().replace("-", ":").replace(".", ":")
+
+        # Phase 1: exact MAC match
+        matched = None
+        if source_mac:
+            for _iface_name, iface_config in current_interfaces.items():
+                if iface_config.get("macAddress", "").lower().replace("-", ":").replace(".", ":") == source_mac:
+                    matched = iface_config
+                    break
+
+        # Phase 2: exact name match
+        if not matched:
+            for iface_name, iface_config in current_interfaces.items():
+                if interface_name.lower() == iface_name.lower():
+                    matched = iface_config
+                    break
+
+        # Phase 3: unique substring name match
+        if not matched:
+            substring_matches = [
+                cfg for name, cfg in current_interfaces.items() if interface_name.lower() in name.lower()
+            ]
+            if len(substring_matches) == 1:
+                matched = substring_matches[0]
+
+        if not matched:
+            missing.append(f"{interface_name} (interface not found)")
+            continue
+
+        ip_found = False
+        for ip_info in matched.get("ip_addresses", []):
+            if ip_info.get("ip_address") == expected_ip:
+                result = dict(matched)
+                result["subnet_mask"] = ip_info.get("subnet_mask", "")
+                results.append(result)
+                ip_found = True
+                break
+
+        if not ip_found:
+            all_ips = [ip.get("ip_address") for ip in matched.get("ip_addresses", [])]
+            missing.append(f"{interface_name}/{expected_ip} (found IPs: {all_ips})")
+
+    return results, missing
+
+
 def check_static_ip_preservation(
     vm_name: str,
     vm_ssh_connections: SSHConnectionManager,
@@ -417,11 +522,13 @@ def check_static_ip_preservation(
         vm_ssh_connections: SSH connections fixture manager
         source_vm_data: Source VM data collected during plan setup
         source_provider_data: Provider configuration from .providers.json
-        timeout: Total timeout in seconds for network configuration retrieval (default: 600)
+        timeout: Total timeout in seconds for network configuration retrieval (default: 660)
         retry_delay: Delay in seconds between retry attempts (default: 30)
 
     Raises:
-        Exception: If static IP verification fails
+        ValueError: If no static interfaces found or network command fails.
+        TimeoutError: If not all static IPs appear within the timeout period.
+        AssertionError: If subnet mask or gateway verification fails.
     """
     LOGGER.info(f"Verifying static IP preservation for VM {vm_name}")
 
@@ -466,57 +573,19 @@ def check_static_ip_preservation(
         nonlocal last_missing
         try:
             with ssh_conn:
-                if not ssh_conn.rrmngmnt_host:
-                    LOGGER.warning(f"SSH connection not established for VM {vm_name} - retrying...")
-                    return None
-                executor = ssh_conn.rrmngmnt_host.executor(user=ssh_conn.rrmngmnt_user)
-                executor.port = ssh_conn.local_port
-                rc, stdout, err = executor.run_cmd(network_cmd)
-                if rc != 0:
-                    raise CommandExecFailed(name=" ".join(network_cmd), err=err)
-
-                if not stdout.strip():
-                    LOGGER.warning(f"{' '.join(network_cmd)} returned empty output")
-                    return None
-
-                current_interfaces = (
-                    _parse_windows_network_config(stdout) if is_windows else _parse_linux_network_config(stdout)
+                current_interfaces = _load_current_interfaces(
+                    ssh_conn=ssh_conn,
+                    network_cmd=network_cmd,
+                    is_windows=is_windows,
+                    vm_name=vm_name,
                 )
+            if current_interfaces is None:
+                return None
 
-            results: list[dict[str, Any]] = []
-            missing: list[str] = []
-
-            for interface in static_interfaces:
-                interface_name = interface["name"]
-                expected_ip = interface["ip_address"]
-
-                matched = None
-                for iface_name, iface_config in current_interfaces.items():
-                    name_match = interface_name.lower() in iface_name.lower()
-                    source_mac = interface.get("macAddress", "").lower().replace("-", ":").replace(".", ":")
-                    dest_mac = iface_config.get("macAddress", "").lower().replace("-", ":").replace(".", ":")
-                    mac_match = source_mac == dest_mac and source_mac != ""
-
-                    if name_match or mac_match:
-                        matched = iface_config
-                        break
-
-                if not matched:
-                    missing.append(f"{interface_name} (interface not found)")
-                    continue
-
-                ip_found = False
-                for ip_info in matched.get("ip_addresses", []):
-                    if ip_info.get("ip_address") == expected_ip:
-                        result = dict(matched)
-                        result["subnet_mask"] = ip_info.get("subnet_mask", "")
-                        results.append(result)
-                        ip_found = True
-                        break
-
-                if not ip_found:
-                    all_ips = [ip.get("ip_address") for ip in matched.get("ip_addresses", [])]
-                    missing.append(f"{interface_name}/{expected_ip} (found IPs: {all_ips})")
+            results, missing = _match_expected_static_ips(
+                current_interfaces=current_interfaces,
+                static_interfaces=static_interfaces,
+            )
 
             if missing:
                 last_missing = missing
