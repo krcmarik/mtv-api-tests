@@ -33,7 +33,7 @@ def run_mtv_upgrade(
 
     Raises:
         ValueError: If required parameters are empty or script is not found.
-        MtvUpgradeError: If the upgrade script exits with a non-zero status.
+        MtvUpgradeError: If the upgrade script exits with a non-zero status or times out.
     """
     if not script_path:
         raise ValueError("script_path must be provided via --tc=upgrade_script_path:<path>")
@@ -62,7 +62,10 @@ def run_mtv_upgrade(
             env=env,
             cwd=os.path.dirname(script_path),
             check=True,
+            timeout=3600,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise MtvUpgradeError(f"MTV upgrade script timed out after {exc.timeout} seconds") from exc
     except subprocess.CalledProcessError as exc:
         raise MtvUpgradeError(f"MTV upgrade script failed with exit code {exc.returncode}") from exc
 
