@@ -24,7 +24,7 @@ from libs.base_provider import BaseProvider
 from libs.forklift_inventory import ForkliftInventory
 from libs.providers.rhv import OvirtProvider
 from utilities.naming import resolve_destination_vm_name
-from utilities.ssh_utils import SSHConnectionManager
+from utilities.ssh_utils import SSHConnectionManager, VMSSHConnection
 from utilities.utils import get_cluster_version, get_value_from_py_config, rhv_provider
 from utilities.vmware_guest_operations import DATA_INTEGRITY_FILE
 
@@ -400,7 +400,7 @@ def _verify_gateway(interface_name: str, expected_gateway: str, matching_interfa
 
 
 def _load_current_interfaces(
-    ssh_conn: Any,
+    ssh_conn: VMSSHConnection,
     network_cmd: list[str],
     is_windows: bool,
     vm_name: str,
@@ -408,7 +408,7 @@ def _load_current_interfaces(
     """Run a network command over SSH and parse the guest's interface configuration.
 
     Args:
-        ssh_conn: SSH connection object with rrmngmnt_host/rrmngmnt_user/local_port
+        ssh_conn (VMSSHConnection): SSH connection to the destination VM
         network_cmd (list[str]): Command to run (e.g. ['nmcli', 'device', 'show'])
         is_windows (bool): True to parse ipconfig output, False for nmcli
         vm_name (str): VM name used in log messages
