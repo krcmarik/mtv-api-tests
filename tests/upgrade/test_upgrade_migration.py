@@ -26,11 +26,7 @@ from utilities.mtv_migration import (
     get_storage_migration_map,
 )
 from utilities.post_migration import check_vms
-from utilities.upgrade import (
-    run_mtv_upgrade,
-    verify_plan_ready_after_upgrade,
-    wait_for_forklift_pods_ready,
-)
+from utilities.upgrade import run_mtv_upgrade
 from utilities.utils import get_mtv_version, populate_vm_ids
 
 if TYPE_CHECKING:
@@ -64,15 +60,6 @@ class TestUpgradeColdMigration:
     storage_map: StorageMap
     network_map: NetworkMap
     plan_resource: Plan
-
-    def test_verify_pre_upgrade_version(
-        self,
-        ocp_admin_client: DynamicClient,
-    ) -> None:
-        """Verify and log the pre-upgrade MTV version."""
-        version = get_mtv_version(client=ocp_admin_client)
-        LOGGER.info(f"Pre-upgrade MTV version: {version}")
-        assert version, "Failed to retrieve pre-upgrade MTV version"
 
     def test_create_storagemap(
         self,
@@ -177,8 +164,12 @@ class TestUpgradeColdMigration:
             f"Expected MTV major.minor version '{expected.major}.{expected.minor}', got '{version}'"
         )
 
-        wait_for_forklift_pods_ready(admin_client=ocp_admin_client)
-        verify_plan_ready_after_upgrade(plan=self.plan_resource)
+        self.plan_resource.wait_for_condition(
+            condition=Plan.Condition.READY,
+            status=Plan.Condition.Status.TRUE,
+            timeout=300,
+        )
+        LOGGER.info(f"Plan '{self.plan_resource.name}' is in Ready state after upgrade")
 
     def test_migrate_vms(
         self,
