@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import stat
-import subprocess
 
 import pytest
+from git import Repo
 from pytest_testconfig import config as py_config
 from simple_logger.logger import get_logger
 
@@ -22,7 +22,7 @@ def upgrade_script_path(tmp_path_factory: pytest.TempPathFactory) -> str:
 
     Raises:
         ValueError: If required config values are missing or the script is not found after cloning.
-        subprocess.CalledProcessError: If the git clone command fails.
+        git.exc.GitCommandError: If the git clone fails.
     """
     repo_url: str = py_config["upgrade_repo_url"]
     repo_ref: str = py_config["upgrade_repo_ref"]
@@ -35,14 +35,10 @@ def upgrade_script_path(tmp_path_factory: pytest.TempPathFactory) -> str:
     if not script_relative_path:
         raise ValueError("upgrade_script_path must be provided via --tc=upgrade_script_path:<relative-path>")
 
-    base_dir = tmp_path_factory.mktemp("mtv-autodeploy")
-    clone_dir = base_dir / "repo"
+    clone_dir = tmp_path_factory.mktemp("mtv-autodeploy")
 
     LOGGER.info(f"Cloning {repo_url} (ref={repo_ref}) into {clone_dir}")
-    subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", repo_ref, repo_url, str(clone_dir)],
-        check=True,
-    )
+    Repo.clone_from(url=repo_url, to_path=str(clone_dir), branch=repo_ref, depth=1)
 
     script_path = clone_dir / script_relative_path
     if not script_path.is_file():
