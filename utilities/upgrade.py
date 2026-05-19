@@ -32,18 +32,8 @@ def run_mtv_upgrade(
         image_index (str): Optional image index override for the upgrade.
 
     Raises:
-        ValueError: If required parameters are empty or script is not found.
         MtvUpgradeError: If the upgrade script exits with a non-zero status or times out.
     """
-    if not script_path:
-        raise ValueError("script_path must be provided via --tc=upgrade_script_path:<path>")
-    if not os.path.isfile(script_path):
-        raise ValueError(f"Upgrade script not found at path: {script_path}")
-    if not mtv_version:
-        raise ValueError("mtv_version must be provided via --tc=mtv_upgrade_to_version:<version>")
-    if not mtv_source:
-        raise ValueError("mtv_source must be provided via --tc=mtv_upgrade_to_source:<source>")
-
     env = os.environ.copy()
     env.update({
         "MTV_VERSION": mtv_version,
