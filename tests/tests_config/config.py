@@ -13,13 +13,6 @@ remote_ocp_cluster: str = ""
 snapshots_interval: int = 2
 mins_before_cutover: int = 5
 plan_wait_timeout: int = 3600
-upgrade_repo_url: str = ""
-upgrade_repo_ref: str = ""
-upgrade_script_path: str = ""
-mtv_upgrade_to_version: str = ""
-mtv_upgrade_to_source: str = ""
-mtv_upgrade_image_index: str = ""
-
 tests_params: dict = {
     "test_sanity_warm_mtv_migration": {
         "virtual_machines": [

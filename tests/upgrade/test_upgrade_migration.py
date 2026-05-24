@@ -15,26 +15,20 @@ import pytest
 from ocp_resources.network_map import NetworkMap
 from ocp_resources.plan import Plan
 from ocp_resources.storage_map import StorageMap
-from pytest_testconfig import config as py_config
 from packaging.version import InvalidVersion, Version
+from pytest_testconfig import config as py_config
 from simple_logger.logger import get_logger
 
-from utilities.mtv_migration import (
-    create_plan_resource,
-    execute_migration,
-    get_network_migration_map,
-    get_storage_migration_map,
-)
+from utilities.mtv_migration import execute_migration
 from utilities.post_migration import check_vms
 from utilities.upgrade import run_mtv_upgrade
-from utilities.utils import get_mtv_version, populate_vm_ids
+from utilities.utils import get_mtv_version
 
 if TYPE_CHECKING:
     from kubernetes.dynamic import DynamicClient
 
     from libs.base_provider import BaseProvider
     from libs.forklift_inventory import ForkliftInventory
-    from libs.providers.openshift import OCPProvider
     from utilities.ssh_utils import SSHConnectionManager
 
 LOGGER = get_logger(name=__name__)
@@ -57,85 +51,7 @@ LOGGER = get_logger(name=__name__)
 class TestUpgradeColdMigration:
     """Cold migration with MTV operator upgrade between plan creation and execution."""
 
-    storage_map: StorageMap
-    network_map: NetworkMap
-    plan_resource: Plan
-
-    def test_create_storagemap(
-        self,
-        prepared_plan: dict[str, Any],
-        fixture_store: dict[str, Any],
-        ocp_admin_client: DynamicClient,
-        source_provider: BaseProvider,
-        destination_provider: BaseProvider,
-        source_provider_inventory: ForkliftInventory,
-        target_namespace: str,
-    ) -> None:
-        """Create StorageMap resource for migration."""
-        vms: list[str] = [vm["name"] for vm in prepared_plan["virtual_machines"]]
-        self.__class__.storage_map = get_storage_migration_map(
-            fixture_store=fixture_store,
-            source_provider=source_provider,
-            destination_provider=destination_provider,
-            source_provider_inventory=source_provider_inventory,
-            ocp_admin_client=ocp_admin_client,
-            target_namespace=target_namespace,
-            vms=vms,
-        )
-        assert self.storage_map, "StorageMap creation failed"
-
-    def test_create_networkmap(
-        self,
-        prepared_plan: dict[str, Any],
-        fixture_store: dict[str, Any],
-        ocp_admin_client: DynamicClient,
-        source_provider: BaseProvider,
-        destination_provider: BaseProvider,
-        source_provider_inventory: ForkliftInventory,
-        target_namespace: str,
-        multus_network_name: dict[str, str],
-    ) -> None:
-        """Create NetworkMap resource for migration."""
-        vms: list[str] = [vm["name"] for vm in prepared_plan["virtual_machines"]]
-        self.__class__.network_map = get_network_migration_map(
-            fixture_store=fixture_store,
-            source_provider=source_provider,
-            destination_provider=destination_provider,
-            source_provider_inventory=source_provider_inventory,
-            ocp_admin_client=ocp_admin_client,
-            target_namespace=target_namespace,
-            multus_network_name=multus_network_name,
-            vms=vms,
-        )
-        assert self.network_map, "NetworkMap creation failed"
-
-    def test_create_plan(
-        self,
-        prepared_plan: dict[str, Any],
-        fixture_store: dict[str, Any],
-        ocp_admin_client: DynamicClient,
-        source_provider: BaseProvider,
-        destination_provider: OCPProvider,
-        target_namespace: str,
-        source_provider_inventory: ForkliftInventory,
-    ) -> None:
-        """Create MTV Plan CR resource."""
-        populate_vm_ids(prepared_plan, source_provider_inventory)
-
-        self.__class__.plan_resource = create_plan_resource(
-            ocp_admin_client=ocp_admin_client,
-            fixture_store=fixture_store,
-            source_provider=source_provider,
-            destination_provider=destination_provider,
-            storage_map=self.storage_map,
-            network_map=self.network_map,
-            virtual_machines_list=prepared_plan["virtual_machines"],
-            target_namespace=target_namespace,
-            warm_migration=prepared_plan.get("warm_migration", False),
-        )
-        assert self.plan_resource, "Plan creation failed"
-
-    def test_upgrade_mtv(self, upgrade_script_path: str) -> None:
+    def test_upgrade_mtv(self, upgrade_script_path: str, upgrade_plan_resource: Plan) -> None:
         """Upgrade the MTV operator to the target version."""
         run_mtv_upgrade(
             script_path=upgrade_script_path,
@@ -147,6 +63,7 @@ class TestUpgradeColdMigration:
     def test_verify_post_upgrade(
         self,
         ocp_admin_client: DynamicClient,
+        upgrade_plan_resource: Plan,
     ) -> None:
         """Verify MTV version, pod readiness, and Plan CR state after upgrade."""
         version = get_mtv_version(client=ocp_admin_client)
@@ -164,24 +81,25 @@ class TestUpgradeColdMigration:
             f"Expected MTV major.minor version '{expected.major}.{expected.minor}', got '{version}'"
         )
 
-        self.plan_resource.wait_for_condition(
+        upgrade_plan_resource.wait_for_condition(
             condition=Plan.Condition.READY,
             status=Plan.Condition.Status.TRUE,
             timeout=300,
         )
-        LOGGER.info(f"Plan '{self.plan_resource.name}' is in Ready state after upgrade")
+        LOGGER.info(f"Plan '{upgrade_plan_resource.name}' is in Ready state after upgrade")
 
     def test_migrate_vms(
         self,
         fixture_store: dict[str, Any],
         ocp_admin_client: DynamicClient,
         target_namespace: str,
+        upgrade_plan_resource: Plan,
     ) -> None:
         """Execute migration on the upgraded MTV operator."""
         execute_migration(
             ocp_admin_client=ocp_admin_client,
             fixture_store=fixture_store,
-            plan=self.plan_resource,
+            plan=upgrade_plan_resource,
             target_namespace=target_namespace,
         )
 
@@ -194,14 +112,16 @@ class TestUpgradeColdMigration:
         source_vms_namespace: str,
         source_provider_inventory: ForkliftInventory,
         vm_ssh_connections: SSHConnectionManager | None,
+        upgrade_network_map: NetworkMap,
+        upgrade_storage_map: StorageMap,
     ) -> None:
         """Validate migrated VMs after upgrade."""
         check_vms(
             plan=prepared_plan,
             source_provider=source_provider,
             destination_provider=destination_provider,
-            network_map_resource=self.network_map,
-            storage_map_resource=self.storage_map,
+            network_map_resource=upgrade_network_map,
+            storage_map_resource=upgrade_storage_map,
             source_provider_data=source_provider_data,
             source_vms_namespace=source_vms_namespace,
             source_provider_inventory=source_provider_inventory,

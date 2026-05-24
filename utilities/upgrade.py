@@ -47,16 +47,29 @@ def run_mtv_upgrade(
     LOGGER.info(f"Running MTV upgrade: {script_path} (version={mtv_version}, source={mtv_source}, index={image_index})")
 
     try:
-        subprocess.run(
+        result = subprocess.run(
             [script_path],
             env=env,
             cwd=os.path.dirname(script_path),
             check=True,
             timeout=3600,
+            capture_output=True,
         )
     except subprocess.TimeoutExpired as exc:
-        raise MtvUpgradeError(f"MTV upgrade script timed out after {exc.timeout} seconds") from exc
+        stdout = exc.stdout.decode() if exc.stdout else ""
+        stderr = exc.stderr.decode() if exc.stderr else ""
+        raise MtvUpgradeError(
+            f"MTV upgrade script timed out after {exc.timeout} seconds\nstdout: {stdout}\nstderr: {stderr}"
+        ) from exc
     except subprocess.CalledProcessError as exc:
-        raise MtvUpgradeError(f"MTV upgrade script failed with exit code {exc.returncode}") from exc
+        stdout = exc.stdout.decode() if exc.stdout else ""
+        stderr = exc.stderr.decode() if exc.stderr else ""
+        raise MtvUpgradeError(
+            f"MTV upgrade script failed with exit code {exc.returncode}\nstdout: {stdout}\nstderr: {stderr}"
+        ) from exc
+
+    LOGGER.info(f"MTV upgrade stdout:\n{result.stdout.decode()}")
+    if result.stderr:
+        LOGGER.warning(f"MTV upgrade stderr:\n{result.stderr.decode()}")
 
     LOGGER.info(f"MTV upgrade to version {mtv_version} completed successfully")
