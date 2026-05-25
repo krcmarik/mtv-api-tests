@@ -56,20 +56,20 @@ def run_mtv_upgrade(
             capture_output=True,
         )
     except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout.decode() if exc.stdout else ""
-        stderr = exc.stderr.decode() if exc.stderr else ""
+        stdout = (exc.stdout.decode() if exc.stdout else "").replace(env["CLUSTER_PASSWORD"], "***")
+        stderr = (exc.stderr.decode() if exc.stderr else "").replace(env["CLUSTER_PASSWORD"], "***")
         raise MtvUpgradeError(
             f"MTV upgrade script timed out after {exc.timeout} seconds\nstdout: {stdout}\nstderr: {stderr}"
         ) from exc
     except subprocess.CalledProcessError as exc:
-        stdout = exc.stdout.decode() if exc.stdout else ""
-        stderr = exc.stderr.decode() if exc.stderr else ""
+        stdout = (exc.stdout.decode() if exc.stdout else "").replace(env["CLUSTER_PASSWORD"], "***")
+        stderr = (exc.stderr.decode() if exc.stderr else "").replace(env["CLUSTER_PASSWORD"], "***")
         raise MtvUpgradeError(
             f"MTV upgrade script failed with exit code {exc.returncode}\nstdout: {stdout}\nstderr: {stderr}"
         ) from exc
 
-    LOGGER.info(f"MTV upgrade stdout:\n{result.stdout.decode()}")
+    LOGGER.info(f"MTV upgrade stdout:\n{result.stdout.decode().replace(env['CLUSTER_PASSWORD'], '***')}")
     if result.stderr:
-        LOGGER.warning(f"MTV upgrade stderr:\n{result.stderr.decode()}")
+        LOGGER.warning(f"MTV upgrade stderr:\n{result.stderr.decode().replace(env['CLUSTER_PASSWORD'], '***')}")
 
     LOGGER.info(f"MTV upgrade to version {mtv_version} completed successfully")

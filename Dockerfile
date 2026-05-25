@@ -60,6 +60,7 @@ RUN microdnf -y install \
   python3 \
   libxml2 \
   openssl \
+  git \
   && microdnf clean all
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
