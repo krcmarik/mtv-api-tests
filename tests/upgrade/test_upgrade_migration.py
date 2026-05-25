@@ -51,7 +51,7 @@ LOGGER = get_logger(name=__name__)
 class TestUpgradeColdMigration:
     """Cold migration with MTV operator upgrade between plan creation and execution."""
 
-    def test_upgrade_mtv(self, upgrade_script_path: str, upgrade_plan_resource: Plan) -> None:
+    def test_upgrade_mtv(self, upgrade_script_path: str, pre_upgrade_plan_resource: Plan) -> None:
         """Upgrade the MTV operator to the target version."""
         run_mtv_upgrade(
             script_path=upgrade_script_path,
@@ -63,7 +63,7 @@ class TestUpgradeColdMigration:
     def test_verify_post_upgrade(
         self,
         ocp_admin_client: DynamicClient,
-        upgrade_plan_resource: Plan,
+        pre_upgrade_plan_resource: Plan,
     ) -> None:
         """Verify MTV version, pod readiness, and Plan CR state after upgrade."""
         version = get_mtv_version(client=ocp_admin_client)
@@ -81,25 +81,25 @@ class TestUpgradeColdMigration:
             f"Expected MTV major.minor version '{expected.major}.{expected.minor}', got '{version}'"
         )
 
-        upgrade_plan_resource.wait_for_condition(
+        pre_upgrade_plan_resource.wait_for_condition(
             condition=Plan.Condition.READY,
             status=Plan.Condition.Status.TRUE,
             timeout=300,
         )
-        LOGGER.info(f"Plan '{upgrade_plan_resource.name}' is in Ready state after upgrade")
+        LOGGER.info(f"Plan '{pre_upgrade_plan_resource.name}' is in Ready state after upgrade")
 
     def test_migrate_vms(
         self,
         fixture_store: dict[str, Any],
         ocp_admin_client: DynamicClient,
         target_namespace: str,
-        upgrade_plan_resource: Plan,
+        pre_upgrade_plan_resource: Plan,
     ) -> None:
         """Execute migration on the upgraded MTV operator."""
         execute_migration(
             ocp_admin_client=ocp_admin_client,
             fixture_store=fixture_store,
-            plan=upgrade_plan_resource,
+            plan=pre_upgrade_plan_resource,
             target_namespace=target_namespace,
         )
 
@@ -112,16 +112,16 @@ class TestUpgradeColdMigration:
         source_vms_namespace: str,
         source_provider_inventory: ForkliftInventory,
         vm_ssh_connections: SSHConnectionManager | None,
-        upgrade_network_map: NetworkMap,
-        upgrade_storage_map: StorageMap,
+        pre_upgrade_network_map: NetworkMap,
+        pre_upgrade_storage_map: StorageMap,
     ) -> None:
         """Validate migrated VMs after upgrade."""
         check_vms(
             plan=prepared_plan,
             source_provider=source_provider,
             destination_provider=destination_provider,
-            network_map_resource=upgrade_network_map,
-            storage_map_resource=upgrade_storage_map,
+            network_map_resource=pre_upgrade_network_map,
+            storage_map_resource=pre_upgrade_storage_map,
             source_provider_data=source_provider_data,
             source_vms_namespace=source_vms_namespace,
             source_provider_inventory=source_provider_inventory,

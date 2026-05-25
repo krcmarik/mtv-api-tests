@@ -69,7 +69,7 @@ def upgrade_script_path(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 
 @pytest.fixture(scope="class")
-def upgrade_storage_map(
+def pre_upgrade_storage_map(
     prepared_plan: dict[str, Any],
     fixture_store: dict[str, Any],
     ocp_admin_client: DynamicClient,
@@ -105,7 +105,7 @@ def upgrade_storage_map(
 
 
 @pytest.fixture(scope="class")
-def upgrade_network_map(
+def pre_upgrade_network_map(
     prepared_plan: dict[str, Any],
     fixture_store: dict[str, Any],
     ocp_admin_client: DynamicClient,
@@ -144,7 +144,7 @@ def upgrade_network_map(
 
 
 @pytest.fixture(scope="class")
-def upgrade_plan_resource(
+def pre_upgrade_plan_resource(
     prepared_plan: dict[str, Any],
     fixture_store: dict[str, Any],
     ocp_admin_client: DynamicClient,
@@ -152,8 +152,8 @@ def upgrade_plan_resource(
     destination_provider: OCPProvider,
     source_provider_inventory: ForkliftInventory,
     target_namespace: str,
-    upgrade_storage_map: StorageMap,
-    upgrade_network_map: NetworkMap,
+    pre_upgrade_storage_map: StorageMap,
+    pre_upgrade_network_map: NetworkMap,
 ) -> Plan:
     """Create MTV Plan CR resource for upgrade migration tests.
 
@@ -165,8 +165,8 @@ def upgrade_plan_resource(
         destination_provider (OCPProvider): Destination provider.
         source_provider_inventory (ForkliftInventory): Provider inventory.
         target_namespace (str): Target namespace.
-        upgrade_storage_map (StorageMap): Storage map for the migration.
-        upgrade_network_map (NetworkMap): Network map for the migration.
+        pre_upgrade_storage_map (StorageMap): Storage map for the migration.
+        pre_upgrade_network_map (NetworkMap): Network map for the migration.
 
     Returns:
         Plan: The created Plan CR resource.
@@ -177,8 +177,8 @@ def upgrade_plan_resource(
         fixture_store=fixture_store,
         source_provider=source_provider,
         destination_provider=destination_provider,
-        storage_map=upgrade_storage_map,
-        network_map=upgrade_network_map,
+        storage_map=pre_upgrade_storage_map,
+        network_map=pre_upgrade_network_map,
         virtual_machines_list=prepared_plan["virtual_machines"],
         target_namespace=target_namespace,
         warm_migration=prepared_plan.get("warm_migration", False),
