@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shlex
 import ssl
 import urllib.request
@@ -249,6 +250,74 @@ def detect_vmware_ip_origins_via_guest_ops(
         return
 
     _apply_ip_origins_to_vm_details(vm_details=vm_details, origins=origins, vm_name=vm.name)
+
+
+def detect_guest_nic_names(
+    source_provider: VMWareProvider,
+    vm: vim.VirtualMachine,
+    source_provider_data: dict[str, Any],
+    vm_details: dict[str, Any],
+) -> None:
+    """Detect guest OS NIC names via VMware Guest Operations API.
+
+    Runs 'ip -j link show' inside the guest to collect NIC name and MAC address pairs,
+    then stores the guest NIC name on matching network interfaces in vm_details.
+
+    Note: Only supports Linux guest operating systems. The caller must ensure this
+    is only invoked for VMs running a Linux guest OS.
+
+    Args:
+        source_provider: VMware provider instance with content and host attributes
+        vm: VMware VM object (must be powered on with VMware Tools running)
+        source_provider_data: Provider config containing guest credentials
+        vm_details: VM details dict from vm_dict(), updated in-place
+
+    Raises:
+        ValueError: If guest credentials are not found in provider config
+        GuestCommandError: If the guest command fails
+        json.JSONDecodeError: If the command output is not valid JSON
+    """
+    try:
+        guest_username = source_provider_data["guest_vm_linux_user"]
+        guest_password = source_provider_data["guest_vm_linux_password"]
+    except KeyError as e:
+        raise ValueError(
+            f"Linux VM credentials not found in provider config: {e}. "
+            "Required: guest_vm_linux_user, guest_vm_linux_password"
+        ) from e
+
+    LOGGER.info(f"Detecting guest NIC names via Guest Operations for VM {vm.name}")
+
+    auth = vim.vm.guest.NamePasswordAuthentication(
+        username=guest_username, password=guest_password, interactiveSession=False
+    )
+
+    vcenter_host = source_provider.host
+    if vcenter_host is None:
+        raise ValueError(f"vCenter host not available for provider used by VM {vm.name}")
+
+    output = run_command_in_vmware_guest(
+        content=source_provider.content,
+        vm=vm,
+        auth=auth,
+        command="ip -j link show",
+        vcenter_host=vcenter_host,
+    )
+
+    interfaces = json.loads(output)
+    for iface in interfaces:
+        nic_name = iface.get("ifname", "")
+        mac = iface.get("address", "").lower()
+        if not mac or nic_name == "lo":
+            continue
+
+        for nic in vm_details.get("network_interfaces", []):
+            if nic.get("macAddress", "").lower() == mac:
+                nic["guest_nic_name"] = nic_name
+                LOGGER.info(f"VM {vm.name}: NIC {nic_name} matched to MAC {mac}")
+                break
+        else:
+            LOGGER.warning(f"VM {vm.name}: NIC {nic_name} not found in vm_details")
 
 
 def create_data_integrity_marker(
