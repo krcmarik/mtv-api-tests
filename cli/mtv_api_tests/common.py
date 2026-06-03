@@ -242,6 +242,33 @@ def gather_vendor_fields(vendor: str) -> dict[str, str]:
     return result
 
 
+def gather_storage_secret_extra() -> dict[str, str]:
+    """Prompt for optional extra Kubernetes Secret keys for copy-offload.
+
+    Keys must match Forklift ``stringData`` names (uppercase, as required by the populator).
+
+    Returns:
+        dict[str, str]: Secret key names mapped to values for ``storage_secret_extra``.
+    """
+    if not Confirm.ask("\n  Add extra storage secret key/value pairs?", default=False):
+        return {}
+
+    console.print("  [dim]Use Kubernetes Secret stringData key names from the populator docs for your array[/dim]")
+    result: dict[str, str] = {}
+    while True:
+        secret_key = Prompt.ask("  Secret key (empty to finish)")
+        if not secret_key.strip():
+            break
+        value = Prompt.ask(f"  Value for {secret_key.strip()}", password=True)
+        if not value.strip():
+            console.print("  [yellow]Skipping empty value[/yellow]")
+            continue
+        result[secret_key.strip()] = value.strip()
+        if not Confirm.ask("  Add another secret key?", default=False):
+            break
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Credential gathering
 # ---------------------------------------------------------------------------
@@ -748,7 +775,9 @@ def mask_passwords(config: dict[str, Any]) -> dict[str, Any]:
     """
     masked: dict[str, Any] = {}
     for key, value in config.items():
-        if isinstance(value, dict):
+        if key == "storage_secret_extra" and isinstance(value, dict):
+            masked[key] = {secret_key: "***" for secret_key in value}
+        elif isinstance(value, dict):
             masked[key] = mask_passwords(value)
         elif "password" in key.lower() or "pwd" in key.lower():
             masked[key] = "***"
