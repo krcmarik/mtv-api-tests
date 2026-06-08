@@ -145,6 +145,7 @@ def create_plan_resource(
     vm_target_namespace: str | None = None,
     migrate_shared_disks: bool | None = None,
     target_power_state: str | None = None,
+    enable_nested_virtualization: bool | None = None,
 ) -> Plan:
     """Create MTV Plan CR resource.
 
@@ -178,6 +179,8 @@ def create_plan_resource(
         migrate_shared_disks (bool | None): Whether to migrate shared disks at plan level. True enables shared disk
             migration for all VMs by default. Individual VMs can override via per-VM migrateSharedDisks. Defaults to None.
         target_power_state (str | None): Target power state for VMs after migration (e.g., 'on', 'off'). Defaults to None.
+        enable_nested_virtualization (bool | None): Whether to enable nested virtualization on migrated VMs.
+            When False, CPU features vmx/svm are disabled. Defaults to None (not set on Plan CR).
 
     Returns:
         Plan: The created Plan CR resource.
@@ -241,6 +244,9 @@ def create_plan_resource(
 
     if migrate_shared_disks is not None:
         plan_kwargs["migrate_shared_disks"] = migrate_shared_disks
+
+    if enable_nested_virtualization is not None:
+        plan_kwargs["enable_nested_virtualization"] = enable_nested_virtualization
 
     # Add copy-offload specific parameters if enabled
     if copyoffload:

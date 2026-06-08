@@ -772,6 +772,88 @@ def check_cpu(source_vm: dict[str, Any], destination_vm: dict[str, Any]) -> None
         raise AssertionError(f"CPU failed checks: {failed_checks}")
 
 
+def check_cpu_features(
+    destination_vm: dict[str, Any],
+    expected_features: list[dict[str, str]],
+) -> None:
+    """Verify CPU feature policies on the migrated VM.
+
+    Args:
+        destination_vm (dict[str, Any]): Destination VM data dictionary
+        expected_features (list[dict[str, str]]): Expected CPU features with policies,
+            e.g. [{"name": "vmx", "policy": "disable"}, {"name": "svm", "policy": "disable"}]
+
+    Raises:
+        AssertionError: If CPU features do not match expected configuration
+    """
+    actual_features: list[dict[str, Any]] = destination_vm["cpu"].get("features", [])
+    for expected in expected_features:
+        feature_name = expected["name"]
+        expected_policy = expected["policy"]
+        matching = [f for f in actual_features if f.get("name") == feature_name]
+        assert matching, f"CPU feature '{feature_name}' not found on migrated VM. Actual features: {actual_features}"
+        actual_policy = matching[0].get("policy")
+        assert actual_policy is not None, (
+            f"CPU feature '{feature_name}' found but has no 'policy' field. Feature data: {matching[0]}"
+        )
+        assert actual_policy == expected_policy, (
+            f"CPU feature '{feature_name}' has policy '{actual_policy}', expected '{expected_policy}'"
+        )
+
+    LOGGER.info(f"CPU feature verification passed: {[f['name'] + '=' + f['policy'] for f in expected_features]}")
+
+
+def check_vbs_status(
+    vm_name: str,
+    vm_ssh_connections: SSHConnectionManager,
+    source_provider_data: dict[str, Any],
+    source_vm_info: dict[str, Any],
+) -> None:
+    """Verify Virtualization Based Security (VBS) is disabled on a Windows VM.
+
+    Connects via SSH to the Windows guest and queries the DeviceGuard WMI class
+    to confirm VirtualizationBasedSecurityStatus is 0 (disabled).
+
+    Args:
+        vm_name (str): Name of the VM to check
+        vm_ssh_connections (SSHConnectionManager): SSH connections manager
+        source_provider_data (dict[str, Any]): Source provider data with Windows credentials
+        source_vm_info (dict[str, Any]): VM information including OS type
+
+    Raises:
+        ConnectionError: If SSH connection cannot be established to the VM
+        ValueError: If credentials are not found or VBS status command fails
+        AssertionError: If VBS is still running (status 2)
+    """
+    ssh_username, ssh_password = get_ssh_credentials_from_provider_config(source_provider_data, source_vm_info)
+    ssh_conn = vm_ssh_connections.create(vm_name=vm_name, username=ssh_username, password=ssh_password)
+
+    vbs_cmd = [
+        "powershell",
+        "-Command",
+        "(Get-CimInstance -Namespace root\\Microsoft\\Windows\\DeviceGuard "
+        "-ClassName Win32_DeviceGuard).VirtualizationBasedSecurityStatus",
+    ]
+
+    with ssh_conn:
+        if not ssh_conn.rrmngmnt_host:
+            raise ConnectionError(f"SSH connection not established for VM {vm_name}")
+
+        executor = ssh_conn.rrmngmnt_host.executor(user=ssh_conn.rrmngmnt_user)
+        executor.port = ssh_conn.local_port
+        rc, stdout, err = executor.run_cmd(vbs_cmd)
+
+        if rc != 0:
+            raise ValueError(f"VBS status command failed on VM '{vm_name}'. rc={rc}, stderr={err}")
+
+        vbs_status = stdout.strip()
+        assert vbs_status != "2", (
+            f"VBS is still running on VM '{vm_name}'. "
+            f"VirtualizationBasedSecurityStatus: {vbs_status}, expected: not 2 (not running)"
+        )
+        LOGGER.info(f"VBS verification passed for VM '{vm_name}': VirtualizationBasedSecurityStatus={vbs_status}")
+
+
 def check_memory(source_vm: dict[str, Any], destination_vm: dict[str, Any]) -> None:
     assert source_vm["memory_in_mb"] == destination_vm["memory_in_mb"]
 
@@ -1571,6 +1653,34 @@ def check_vms(
                 )
             except Exception as exp:
                 res[vm_name].append(f"check_vm_affinity - {str(exp)}")
+
+        # Nested virtualization checks — when enableNestedVirtualization is explicitly False
+        # Supported by all providers except OpenShift (OCP→OCP)
+        if (
+            plan.get("enable_nested_virtualization") is False
+            and source_provider.type != Provider.ProviderType.OPENSHIFT
+        ):
+            try:
+                check_cpu_features(
+                    destination_vm=destination_vm,
+                    expected_features=[
+                        {"name": "vmx", "policy": "disable"},
+                        {"name": "svm", "policy": "disable"},
+                    ],
+                )
+            except Exception as exp:
+                res[vm_name].append(f"check_cpu_features - {str(exp)}")
+
+            if vm_ssh_connections and destination_vm.get("power_state") == "on" and source_vm.get("win_os"):
+                try:
+                    check_vbs_status(
+                        vm_name=destination_vm_name,
+                        vm_ssh_connections=vm_ssh_connections,
+                        source_provider_data=source_provider_data,
+                        source_vm_info=source_vm,
+                    )
+                except Exception as exp:
+                    res[vm_name].append(f"check_vbs_status - {str(exp)}")
 
         # Group 2: Source-comparison checks — require real source VM data (OVA has none)
         if source_provider.type != Provider.ProviderType.OVA:
