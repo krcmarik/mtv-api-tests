@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import ipaddress
+
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 import shortuuid
@@ -1336,21 +1337,24 @@ class VMWareProvider(BaseProvider):
             )
             device_changes.extend(disk_device_specs)
 
+        uppercase_mac_nics: set[str] = set()
         if regenerate_mac:
             source_config = source_vm.config
             if source_config and source_config.hardware and source_config.hardware.device:
                 for device in source_config.hardware.device:
                     if isinstance(device, vim.vm.device.VirtualEthernetCard):
+                        nic_label = device.deviceInfo.label
+                        if device.addressType == "manual":
+                            if any(c.isalpha() and c.isupper() for c in device.macAddress):
+                                uppercase_mac_nics.add(nic_label)
+                            continue
+                        device.addressType = "generated"
+
                         device_spec = vim.vm.device.VirtualDeviceSpec()
                         device_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.edit
                         device_spec.device = device
-                        device_spec.device.addressType = "generated"
                         device_changes.append(device_spec)
-                        LOGGER.info(
-                            f"Configured MAC regeneration for network device: {
-                                device.deviceInfo.label if device.deviceInfo else 'Unknown'
-                            }",
-                        )
+                        LOGGER.info(f"Configured MAC regeneration for network device: {nic_label}")
 
         if device_changes:
             config_spec.deviceChange = device_changes
@@ -1474,6 +1478,27 @@ class VMWareProvider(BaseProvider):
         # Add RDM disks post-clone (RDM requires VMFS datastore, can't be added during clone on NFS)
         for rdm_config in rdm_disks:
             self.add_rdm_disk_to_vm(vm=res, rdm_type=rdm_config["rdm_type"], enable_cbt=enable_ctk)
+
+        # Reconfigure cloned NICs with uppercase manual MACs back to manual address type.
+        # Only uppercase MACs need reconfiguration since VMware generates lowercase by default.
+        if uppercase_mac_nics and res:
+            reconfig_specs = []
+            for dev in res.config.hardware.device:
+                if (
+                    not isinstance(dev, vim.vm.device.VirtualEthernetCard)
+                    or dev.deviceInfo.label not in uppercase_mac_nics
+                ):
+                    continue
+                dev.macAddress = dev.macAddress.upper()
+                dev.addressType = "manual"
+                dev_spec = vim.vm.device.VirtualDeviceSpec()
+                dev_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.edit
+                dev_spec.device = dev
+                reconfig_specs.append(dev_spec)
+                LOGGER.info(f"Set manual MAC for {dev.deviceInfo.label}: {dev.macAddress}")
+            if reconfig_specs:
+                reconfig_task = res.ReconfigVM_Task(spec=vim.vm.ConfigSpec(deviceChange=reconfig_specs))
+                self.wait_task(task=reconfig_task, action_name=f"Reconfiguring manual MACs on {clone_vm_name}")
 
         return res
 
