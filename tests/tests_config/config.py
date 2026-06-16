@@ -475,6 +475,26 @@ tests_params: dict = {
         "warm_migration": False,
         "copyoffload": True,
     },
+    "test_mtv_clusterrole_warm_migration": {
+        "virtual_machines": [
+            {
+                "name": "mtv-tests-rhel8",
+                "source_vm_power": "on",
+                "guest_agent": True,
+            },
+        ],
+        "warm_migration": True,
+    },
+    "test_mtv_clusterrole_warm_migration_with_scc": {
+        "virtual_machines": [
+            {
+                "name": "mtv-tests-rhel8",
+                "source_vm_power": "on",
+                "guest_agent": True,
+            },
+        ],
+        "warm_migration": True,
+    },
     "test_copyoffload_scale_migration": {
         "virtual_machines": [
             {
