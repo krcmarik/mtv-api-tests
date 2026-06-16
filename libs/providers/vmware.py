@@ -1347,7 +1347,6 @@ class VMWareProvider(BaseProvider):
                         if device.addressType == "manual":
                             if any(c.isalpha() and c.isupper() for c in device.macAddress):
                                 uppercase_mac_nics.add(nic_label)
-                            continue
                         device.addressType = "generated"
 
                         device_spec = vim.vm.device.VirtualDeviceSpec()
