@@ -200,14 +200,17 @@ class OCPProvider(BaseProvider):
 
         devices: dict[str, Any] = domain.get("devices", {})
         tpm_config: dict[str, Any] | None = devices.get("tpm")
-        firmware_info["tpm_present"] = bool(tpm_config.get("persistent")) if tpm_config else False
+        firmware_info["tpm_present"] = tpm_config is not None
 
-        bootloader = firmware_spec.get("bootloader") if firmware_spec else None
-        efi_config = bootloader.get("efi") if bootloader else None
+        bootloader: dict[str, Any] | None = firmware_spec.get("bootloader") if firmware_spec else None
+        efi_config: dict[str, Any] | None = bootloader.get("efi") if bootloader else None
 
         if efi_config:
             firmware_info["boot_firmware"] = "efi"
-            firmware_info["secure_boot"] = efi_config["secureBoot"]
+            secure_boot: bool | None = efi_config.get("secureBoot")
+            if secure_boot is None:
+                raise ValueError(f"secureBoot not found in EFI config for VM '{cnv_vm_name}'")
+            firmware_info["secure_boot"] = secure_boot
         else:
             firmware_info["boot_firmware"] = "bios"
             firmware_info["secure_boot"] = False
