@@ -729,6 +729,16 @@ class VMWareProvider(BaseProvider):
         # Guest OS
         result_vm_info["win_os"] = "win" in vm_config.guestId
 
+        firmware_info: dict[str, Any] = {}
+        firmware_info["boot_firmware"] = vm_config.firmware
+        boot_options = vm_config.bootOptions
+        firmware_info["secure_boot"] = boot_options.efiSecureBootEnabled if boot_options else False
+
+        firmware_info["tpm_present"] = any(
+            isinstance(device, vim.vm.device.VirtualTPM) for device in vm_config.hardware.device
+        )
+        result_vm_info["firmware"] = firmware_info
+
         # Power state
         if _vm.runtime.powerState == "poweredOn":
             result_vm_info["power_state"] = "on"

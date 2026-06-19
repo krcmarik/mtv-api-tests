@@ -1170,6 +1170,45 @@ def check_serial_preservation(
         LOGGER.info(f"Serial preserved correctly (OCP {ocp_version} < 4.20, plain UUID): {dest_serial}")
 
 
+def check_firmware_and_tpm(source_vm: dict[str, Any], destination_vm: dict[str, Any]) -> None:
+    """Verify firmware type and TPM settings are preserved after migration.
+
+    Args:
+        source_vm: Source VM info dictionary with firmware data.
+        destination_vm: Destination VM info dictionary with firmware data.
+
+    Raises:
+        AssertionError: If firmware type, secure boot, or TPM settings don't match.
+    """
+    source_firmware: dict[str, Any] = source_vm["firmware"]
+    dest_firmware: dict[str, Any] = destination_vm["firmware"]
+
+    source_boot = source_firmware["boot_firmware"]
+    dest_boot = dest_firmware["boot_firmware"]
+    assert source_boot == dest_boot, (
+        f"Boot firmware mismatch for VM '{destination_vm['name']}': source={source_boot}, destination={dest_boot}"
+    )
+
+    source_secure_boot = source_firmware["secure_boot"]
+    dest_secure_boot = dest_firmware["secure_boot"]
+    assert source_secure_boot == dest_secure_boot, (
+        f"Secure boot mismatch for VM '{destination_vm['name']}': "
+        f"source={source_secure_boot}, destination={dest_secure_boot}"
+    )
+
+    source_tpm = source_firmware["tpm_present"]
+    dest_tpm = dest_firmware["tpm_present"]
+    assert source_tpm == dest_tpm, (
+        f"TPM mismatch for VM '{destination_vm['name']}': "
+        f"source tpm_present={source_tpm}, destination tpm_present={dest_tpm}"
+    )
+
+    LOGGER.info(
+        f"Firmware checks passed for VM '{destination_vm['name']}': "
+        f"boot={dest_boot}, secure_boot={dest_secure_boot}, tpm={dest_tpm}"
+    )
+
+
 def check_vm_node_placement(
     destination_vm: dict[str, Any],
     expected_node: str,
@@ -1547,6 +1586,11 @@ def check_vms(
                 )
             except Exception as exp:
                 res[vm_name].append(f"check_serial_preservation - {str(exp)}")
+
+            try:
+                check_firmware_and_tpm(source_vm=source_vm, destination_vm=destination_vm)
+            except Exception as exp:
+                res[vm_name].append(f"check_firmware_and_tpm - {str(exp)}")
 
         # Group 4: RHV-specific checks
         if rhv_provider(source_provider_data) and isinstance(source_provider, OvirtProvider):

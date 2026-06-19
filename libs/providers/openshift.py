@@ -192,8 +192,27 @@ class OCPProvider(BaseProvider):
         )
 
         # Serial number (from firmware) - for serial preservation verification
-        firmware_spec: dict[str, Any] | None = cnv_vm.instance.spec.template.spec.domain.get("firmware")
+        domain: dict[str, Any] = cnv_vm.instance.spec.template.spec.domain
+
+        firmware_spec: dict[str, Any] | None = domain.get("firmware")
         result_vm_info["serial"] = firmware_spec.get("serial") if firmware_spec else None
+        firmware_info: dict[str, Any] = {}
+
+        devices: dict[str, Any] = domain.get("devices", {})
+        tpm_config: dict[str, Any] | None = devices.get("tpm")
+        firmware_info["tpm_present"] = bool(tpm_config.get("persistent")) if tpm_config else False
+
+        bootloader = firmware_spec.get("bootloader") if firmware_spec else None
+        efi_config = bootloader.get("efi") if bootloader else None
+
+        if efi_config:
+            firmware_info["boot_firmware"] = "efi"
+            firmware_info["secure_boot"] = efi_config["secureBoot"]
+        else:
+            firmware_info["boot_firmware"] = "bios"
+            firmware_info["secure_boot"] = False
+
+        result_vm_info["firmware"] = firmware_info
 
         # Extract template once to avoid duplicate attribute access
         template = cnv_vm.instance.spec.template
