@@ -192,6 +192,17 @@ cp .providers.json.example .providers.json
 
 See `.providers.json.example` for complete templates of all supported providers.
 
+> **Schema & IDE support:** `providers_schema.json` documents which fields are required vs optional
+> per provider type. Add `"$schema"` as the first key in your `.providers.json` for IDE autocomplete:
+>
+> ```json
+> {
+>   "$schema": "https://raw.githubusercontent.com/RedHatQE/mtv-api-tests/main/providers_schema.json",
+>   "my-vsphere": { ... },
+>   "my-ovirt": { ... }
+> }
+> ```
+
 ---
 
 ### 4. Find Your Storage Class
@@ -256,6 +267,7 @@ The Quick Start runs **tier0** tests (smoke tests). You can run other test categ
 | Marker | What It Tests | When to Use |
 | ------ | ------------- | ----------- |
 | `tier0` | Smoke tests - critical paths | First run, quick validation |
+| `tier1` | Extended functionality tests | Broader coverage beyond smoke |
 | `copyoffload` | Fast migrations via shared storage | Testing storage arrays |
 | `copyoffload_sanity` | Copy-offload sanity subset (see below) | Quick copy-offload validation |
 | `warm` | Warm migrations (VMs stay running) | Specific scenario testing |
@@ -507,7 +519,7 @@ The wizard will:
 2. Connect to vSphere and let you select datastores, a test VM, and an ESXi host
 3. Prompt for storage vendor and credentials
 4. Connect to OpenShift and let you select a storage class
-5. Ask which test category to run (`all`, `copyoffload`, `copyoffload_sanity`, `tier0`, `warm`, `remote`)
+5. Ask which test category to run (`all`, `copyoffload`, `copyoffload_sanity`, `tier0`, `tier1`, `warm`, `remote`)
 6. Write `.providers.json` and `mtv-api-tests-manifests.yaml`
 
 > **Security Note:** The generated `mtv-api-tests-manifests.yaml` contains embedded credentials
@@ -562,6 +574,12 @@ and a configured StorageMap with offload plugin settings.
 troubleshooting, see:
 
 📖 **[Copy-Offload Testing Guide](guides/copyoffload/how-to-run-copyoffload-tests.md)**
+
+> **Note:** `TestCopyoffloadPopulatorThrottlingMigration` (MTV-696) mutates cluster-wide
+> `ForkliftController` populator settings. Do not run it in parallel with other copy-offload tests on the
+> same cluster — the test temporarily sets `controller_max_populator_inflight` (and the populator
+> deployment `MAX_POPULATOR_INFLIGHT` env) to **2**, which caps in-flight populate pods cluster-wide for
+> every other migration running at the same time.
 
 For array-specific Secret keys not covered by built-in vendor fields, use `storage_secret_extra` in the
 `copyoffload` section of `.providers.json` (or `COPYOFFLOAD_STORAGE_SECRET_EXTRA`); see the guide.

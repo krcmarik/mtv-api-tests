@@ -69,6 +69,7 @@ TEST_CATEGORIES: dict[str, str] = {
     "all": "All tests (no marker filter)",
     "copyoffload": "Copy-offload (XCOPY) tests",
     "tier0": "Core functionality tests (smoke tests)",
+    "tier1": "Extended functionality tests",
     "warm": "Warm migration tests",
     "remote": "Remote cluster migration tests",
 }
