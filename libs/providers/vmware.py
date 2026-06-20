@@ -1343,9 +1343,11 @@ class VMWareProvider(BaseProvider):
             if source_config and source_config.hardware and source_config.hardware.device:
                 for device in source_config.hardware.device:
                     if isinstance(device, vim.vm.device.VirtualEthernetCard):
+                        if not device.deviceInfo:
+                            raise ValueError(f"Device has no deviceInfo in VM '{source_vm_name}' config")
                         nic_label = device.deviceInfo.label
                         if device.addressType == "manual":
-                            if any(c.isalpha() and c.isupper() for c in device.macAddress):
+                            if device.macAddress != device.macAddress.lower():
                                 uppercase_mac_nics.add(nic_label)
                         device.addressType = "generated"
 
@@ -1451,6 +1453,7 @@ class VMWareProvider(BaseProvider):
         except VmCloneError as e:
             if regenerate_mac and "in use" in str(e).lower():
                 LOGGER.warning("Clone failed with resource conflict, retrying without MAC regeneration")
+                uppercase_mac_nics.clear()
                 if clone_spec.config and clone_spec.config.deviceChange:
                     non_mac_changes = [
                         change
@@ -1478,28 +1481,42 @@ class VMWareProvider(BaseProvider):
         for rdm_config in rdm_disks:
             self.add_rdm_disk_to_vm(vm=res, rdm_type=rdm_config["rdm_type"], enable_cbt=enable_ctk)
 
-        # Reconfigure cloned NICs with uppercase manual MACs back to manual address type.
-        # Only uppercase MACs need reconfiguration since VMware generates lowercase by default.
         if uppercase_mac_nics and res:
-            reconfig_specs = []
-            for dev in res.config.hardware.device:
-                if (
-                    not isinstance(dev, vim.vm.device.VirtualEthernetCard)
-                    or dev.deviceInfo.label not in uppercase_mac_nics
-                ):
-                    continue
-                dev.macAddress = dev.macAddress.upper()
-                dev.addressType = "manual"
-                dev_spec = vim.vm.device.VirtualDeviceSpec()
-                dev_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.edit
-                dev_spec.device = dev
-                reconfig_specs.append(dev_spec)
-                LOGGER.info(f"Set manual MAC for {dev.deviceInfo.label}: {dev.macAddress}")
-            if reconfig_specs:
-                reconfig_task = res.ReconfigVM_Task(spec=vim.vm.ConfigSpec(deviceChange=reconfig_specs))
-                self.wait_task(task=reconfig_task, action_name=f"Reconfiguring manual MACs on {clone_vm_name}")
+            self._reconfigure_uppercase_manual_macs(
+                vm=res, clone_vm_name=clone_vm_name, uppercase_mac_nics=uppercase_mac_nics
+            )
 
         return res
+
+    def _reconfigure_uppercase_manual_macs(self, vm: Any, clone_vm_name: str, uppercase_mac_nics: set[str]) -> None:
+        """Reconfigure cloned NICs with uppercase manual MACs back to manual address type.
+
+        VMware generates lowercase MACs by default, so only uppercase MACs need
+        reconfiguration after cloning.
+
+        Args:
+            vm (Any): The cloned VM object to reconfigure.
+            clone_vm_name (str): Name of the cloned VM (used for logging and error messages).
+            uppercase_mac_nics (set[str]): Set of NIC labels whose MACs need uppercasing.
+        """
+        reconfig_specs = []
+        for dev in vm.config.hardware.device:
+            if not isinstance(dev, vim.vm.device.VirtualEthernetCard):
+                continue
+            if not dev.deviceInfo:
+                raise ValueError(f"Device has no deviceInfo in cloned VM '{clone_vm_name}'")
+            if dev.deviceInfo.label not in uppercase_mac_nics:
+                continue
+            dev.macAddress = dev.macAddress.upper()
+            dev.addressType = "manual"
+            dev_spec = vim.vm.device.VirtualDeviceSpec()
+            dev_spec.operation = vim.vm.device.VirtualDeviceSpec.Operation.edit
+            dev_spec.device = dev
+            reconfig_specs.append(dev_spec)
+            LOGGER.info(f"Set manual MAC for {dev.deviceInfo.label}: {dev.macAddress}")
+        if reconfig_specs:
+            reconfig_task = vm.ReconfigVM_Task(spec=vim.vm.ConfigSpec(deviceChange=reconfig_specs))
+            self.wait_task(task=reconfig_task, action_name=f"Reconfiguring manual MACs on {clone_vm_name}")
 
     @staticmethod
     def _get_bus_number_for_controller_key(

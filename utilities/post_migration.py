@@ -698,8 +698,14 @@ def get_nic_by_mac(nics: list[dict[str, Any]], mac_address: str) -> dict[str, An
 
     Returns:
         dict[str, Any]: The matching NIC dictionary.
+
+    Raises:
+        ValueError: If no NIC matches the MAC address.
     """
-    return [nic for nic in nics if nic["macAddress"].lower() == mac_address.lower()][0]
+    matched = [nic for nic in nics if nic["macAddress"].lower() == mac_address.lower()]
+    if not matched:
+        raise ValueError(f"No NIC found with MAC address '{mac_address}' in {len(nics)} NICs")
+    return matched[0]
 
 
 def check_network(source_vm: dict[str, Any], destination_vm: dict[str, Any], network_migration_map: NetworkMap) -> None:
