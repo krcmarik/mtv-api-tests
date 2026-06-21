@@ -200,7 +200,7 @@ class OCPProvider(BaseProvider):
 
         devices: dict[str, Any] = domain.get("devices", {})
         tpm_config: dict[str, Any] | None = devices.get("tpm")
-        firmware_info["tpm_present"] = tpm_config is not None
+        firmware_info["tpm_present"] = bool(tpm_config.get("persistent")) if tpm_config else False
 
         bootloader: dict[str, Any] | None = firmware_spec.get("bootloader") if firmware_spec else None
         efi_config: dict[str, Any] | None = bootloader.get("efi") if bootloader else None
