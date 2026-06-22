@@ -1337,8 +1337,8 @@ class VMWareProvider(BaseProvider):
             )
             device_changes.extend(disk_device_specs)
 
-        uppercase_mac_nics: set[str] = set()
         if regenerate_mac:
+            uppercase_mac_nics: set[str] = set()
             source_config = source_vm.config
             if source_config and source_config.hardware and source_config.hardware.device:
                 for device in source_config.hardware.device:
@@ -1477,28 +1477,36 @@ class VMWareProvider(BaseProvider):
         if res and self.fixture_store:
             self.fixture_store["teardown"].setdefault(self.type, []).append({"name": clone_vm_name})
 
+        if not res:
+            raise VmCloneError(f"Clone task for '{clone_vm_name}' returned no VM object")
+
         # Add RDM disks post-clone (RDM requires VMFS datastore, can't be added during clone on NFS)
         for rdm_config in rdm_disks:
             self.add_rdm_disk_to_vm(vm=res, rdm_type=rdm_config["rdm_type"], enable_cbt=enable_ctk)
 
-        if uppercase_mac_nics and res:
+        if regenerate_mac and uppercase_mac_nics:
             self._reconfigure_uppercase_manual_macs(
                 vm=res, clone_vm_name=clone_vm_name, uppercase_mac_nics=uppercase_mac_nics
             )
 
         return res
 
-    def _reconfigure_uppercase_manual_macs(self, vm: Any, clone_vm_name: str, uppercase_mac_nics: set[str]) -> None:
+    def _reconfigure_uppercase_manual_macs(
+        self, vm: vim.VirtualMachine, clone_vm_name: str, uppercase_mac_nics: set[str]
+    ) -> None:
         """Reconfigure cloned NICs with uppercase manual MACs back to manual address type.
 
         VMware generates lowercase MACs by default, so only uppercase MACs need
         reconfiguration after cloning.
 
         Args:
-            vm (Any): The cloned VM object to reconfigure.
+            vm (vim.VirtualMachine): The cloned VM object to reconfigure.
             clone_vm_name (str): Name of the cloned VM (used for logging and error messages).
             uppercase_mac_nics (set[str]): Set of NIC labels whose MACs need uppercasing.
         """
+        if not (vm.config and vm.config.hardware and vm.config.hardware.device):
+            raise ValueError(f"Cloned VM '{clone_vm_name}' has no hardware device configuration")
+
         reconfig_specs = []
         for dev in vm.config.hardware.device:
             if not isinstance(dev, vim.vm.device.VirtualEthernetCard):
