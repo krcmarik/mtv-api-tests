@@ -730,8 +730,11 @@ class VMWareProvider(BaseProvider):
         result_vm_info["win_os"] = "win" in vm_config.guestId
 
         firmware_info: dict[str, Any] = {}
-        firmware_info["boot_firmware"] = vm_config.firmware
+        boot_firmware = vm_config.firmware.lower()
+        firmware_info["boot_firmware"] = boot_firmware
         boot_options = vm_config.bootOptions
+        if boot_firmware == "efi" and boot_options is None:
+            raise ValueError(f"bootOptions is None for EFI VM '{_vm.name}' — expected boot configuration")
         firmware_info["secure_boot"] = boot_options.efiSecureBootEnabled if boot_options else False
 
         firmware_info["tpm_present"] = any(
