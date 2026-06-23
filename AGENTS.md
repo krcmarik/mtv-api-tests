@@ -730,7 +730,7 @@ from utilities.post_migration import check_vms
 )
 @pytest.mark.usefixtures("cleanup_migrated_vms")
 @pytest.mark.incremental
-@pytest.mark.tier0  # optional: tier0/warm/remote/copyoffload
+@pytest.mark.tier0  # optional: tier0, tier1, warm, remote, copyoffload
 class TestNameHere:
     """Test description."""
 
@@ -798,11 +798,16 @@ class TestNameHere:
   `test_check_xcopy_used`. This step calls `verify_populator_throttling()` from `utilities/copyoffload_migration.py`
   to validate per-ESXi-host concurrency limits, `PopulatorThrottled` events, and `sourceHost` labels.
   Requires the `populator_inflight_forkliftcontroller` fixture.
+- **6-step LUKS pattern**: storagemap -> networkmap -> plan -> migrate -> verify_luks_encryption -> check_vms
+  `test_verify_luks_encryption` calls `verify_luks_encryption()` from `utilities/post_migration.py`. LUKS
+  secret setup is handled by the `luks_vm_specs` fixture in `tests/luks/conftest.py`, which resolves
+  passphrases (per-VM override → provider fallback) and creates K8s Secrets.
 
 **Test method naming:** Base tests: `test_create_storagemap`, `test_create_networkmap`, `test_create_plan`,
 `test_migrate_vms`, `test_check_vms`. Copy-offload tests: same through `test_migrate_vms`, then
 `test_check_xcopy_used`, `test_check_vms`. Copy-offload throttling tests: same through `test_migrate_vms`, then
-`test_verify_populator_throttling`, `test_check_xcopy_used`, `test_check_vms`.
+`test_verify_populator_throttling`, `test_check_xcopy_used`, `test_check_vms`. LUKS tests: same through `test_migrate_vms`, then
+`test_verify_luks_encryption`, `test_check_vms`.
 
 **Fixture parameters:** Each test method requests only the fixtures it needs. The example shows typical patterns.
 
@@ -821,9 +826,9 @@ tests_params: dict = {
 
 1. Create the test file in the feature subdirectory described in **Test File Location (MUST)** (for example, `tests/<feature>/test_<feature>_migration.py`)
 2. Create a test class with `@pytest.mark.parametrize` using `class_plan_config` and `indirect=True`
-3. Add pytest markers at class level (tier0, warm, remote, copyoffload)
-4. Implement the 5 test methods following the pattern above (6 for copy-offload tests — use the 6-step copy-offload pattern;
-   7 for copy-offload populator throttling tests — use the 7-step copy-offload throttling pattern)
+3. Add pytest markers at class level (tier0, tier1, warm, remote, copyoffload)
+4. Implement the 5 base test methods. Some features need extra validation steps: see **Key Patterns** for the
+   6-step shared-disk, copy-offload, and LUKS patterns, or the 7-step copy-offload throttling pattern
 
 **VM Configuration Options:**
 
@@ -834,6 +839,8 @@ tests_params: dict = {
 | `guest_agent`     | No       | True if installed                   |
 | `clone`           | No       | True to clone before migration      |
 | `disk_type`       | No       | "thin", "thick-lazy", "thick-eager" |
+| `luks`            | No       | True if VM has LUKS-encrypted disk  |
+| `luks_passphrase` | No       | Per-VM passphrase override          |
 
 ## Fixture Patterns
 
@@ -948,6 +955,7 @@ Test classes for marker-gated features must include the feature name in the clas
 - Warm migration → class name must contain `Warm` (e.g., `TestSanityWarmMtvMigration`)
 - Copy-offload snapshots → class name must contain both `Copyoffload` and `Snapshot` (e.g., `TestCopyoffloadThinSnapshotsMigration`)
 - Copy-offload → class name must contain `Copyoffload` (e.g., `TestCopyoffloadThinMigration`)
+- Tier1 features → class name must include the feature name (e.g., `TestLuksColdMigration`)
 
 This ensures discoverability and consistency with the markers applied to the class.
 
