@@ -730,9 +730,12 @@ class VMWareProvider(BaseProvider):
         result_vm_info["win_os"] = "win" in vm_config.guestId
 
         firmware_info: dict[str, Any] = {}
-        boot_firmware = vm_config.firmware.lower()
+        boot_firmware_raw: str | None = vm_config.firmware
+        if not boot_firmware_raw:
+            raise ValueError(f"firmware attribute is missing or empty for VM '{_vm.name}'")
+        boot_firmware: str = boot_firmware_raw.lower()
         firmware_info["boot_firmware"] = boot_firmware
-        boot_options = vm_config.bootOptions
+        boot_options: vim.vm.BootOptions | None = vm_config.bootOptions
         if boot_firmware == "efi" and boot_options is None:
             raise ValueError(f"bootOptions is None for EFI VM '{_vm.name}' — expected boot configuration")
         firmware_info["secure_boot"] = boot_options.efiSecureBootEnabled if boot_options else False
