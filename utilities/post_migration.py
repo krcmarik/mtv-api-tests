@@ -791,7 +791,10 @@ def get_nic_by_mac(nics: list[dict[str, Any]], mac_address: str) -> dict[str, An
     """
     matched = [nic for nic in nics if nic["macAddress"].lower() == mac_address.lower()]
     if not matched:
-        raise ValueError(f"No NIC found with MAC address '{mac_address}' in {len(nics)} NICs")
+        raise ValueError(
+            f"No NIC found with MAC address '{mac_address}' in {len(nics)} NICs "
+            f"(available: {[n['macAddress'] for n in nics]})"
+        )
     return matched[0]
 
 

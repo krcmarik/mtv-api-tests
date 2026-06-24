@@ -1337,8 +1337,8 @@ class VMWareProvider(BaseProvider):
             )
             device_changes.extend(disk_device_specs)
 
+        uppercase_mac_nics: set[str] = set()
         if regenerate_mac:
-            uppercase_mac_nics: set[str] = set()
             source_config = source_vm.config
             if source_config and source_config.hardware and source_config.hardware.device:
                 for device in source_config.hardware.device:
@@ -1347,6 +1347,9 @@ class VMWareProvider(BaseProvider):
                             raise ValueError(f"Device has no deviceInfo in VM '{source_vm_name}' config")
                         nic_label = device.deviceInfo.label
                         if device.addressType == "manual":
+                            # VMware generates lowercase MACs by default. Only uppercase manual MACs
+                            # need post-clone restoration — lowercase manual MACs get a new generated
+                            # MAC that already matches the expected case/format.
                             if device.macAddress != device.macAddress.lower():
                                 uppercase_mac_nics.add(nic_label)
                         device.addressType = "generated"
@@ -1474,7 +1477,7 @@ class VMWareProvider(BaseProvider):
             else:
                 raise
 
-        if res and self.fixture_store:
+        if self.fixture_store:
             self.fixture_store["teardown"].setdefault(self.type, []).append({"name": clone_vm_name})
 
         if not res:
@@ -1525,6 +1528,10 @@ class VMWareProvider(BaseProvider):
         if reconfig_specs:
             reconfig_task = vm.ReconfigVM_Task(spec=vim.vm.ConfigSpec(deviceChange=reconfig_specs))
             self.wait_task(task=reconfig_task, action_name=f"Reconfiguring manual MACs on {clone_vm_name}")
+
+        unmatched = uppercase_mac_nics - {spec.device.deviceInfo.label for spec in reconfig_specs}
+        if unmatched:
+            LOGGER.warning(f"NICs not found in cloned VM '{clone_vm_name}' for MAC restoration: {unmatched}")
 
     @staticmethod
     def _get_bus_number_for_controller_key(
