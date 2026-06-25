@@ -1506,6 +1506,10 @@ class VMWareProvider(BaseProvider):
             vm (vim.VirtualMachine): The cloned VM object to reconfigure.
             clone_vm_name (str): Name of the cloned VM (used for logging and error messages).
             uppercase_mac_nics (set[str]): Set of NIC labels whose MACs need uppercasing.
+
+        Raises:
+            ValueError: If the cloned VM has no hardware device configuration
+                or a network device is missing deviceInfo.
         """
         if not (vm.config and vm.config.hardware and vm.config.hardware.device):
             raise ValueError(f"Cloned VM '{clone_vm_name}' has no hardware device configuration")
@@ -1526,8 +1530,10 @@ class VMWareProvider(BaseProvider):
             reconfig_specs.append(dev_spec)
             LOGGER.info(f"Set manual MAC for {dev.deviceInfo.label}: {dev.macAddress}")
         if reconfig_specs:
-            reconfig_task = vm.ReconfigVM_Task(spec=vim.vm.ConfigSpec(deviceChange=reconfig_specs))
-            self.wait_task(task=reconfig_task, action_name=f"Reconfiguring manual MACs on {clone_vm_name}")
+            self.wait_task(
+                task=vm.ReconfigVM_Task(spec=vim.vm.ConfigSpec(deviceChange=reconfig_specs)),
+                action_name=f"Reconfiguring manual MACs on {clone_vm_name}",
+            )
 
         unmatched = uppercase_mac_nics - {spec.device.deviceInfo.label for spec in reconfig_specs}
         if unmatched:
