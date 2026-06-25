@@ -1266,6 +1266,7 @@ def check_boot_configuration(source_vm: dict[str, Any], destination_vm: dict[str
 
     Raises:
         AssertionError: If firmware type, secure boot, or TPM settings don't match.
+        KeyError: If required firmware keys are missing in source or destination VM info.
     """
     source_firmware: dict[str, Any] = source_vm["firmware"]
     dest_firmware: dict[str, Any] = destination_vm["firmware"]
@@ -1668,7 +1669,7 @@ def check_vms(
 
             try:
                 check_boot_configuration(source_vm=source_vm, destination_vm=destination_vm)
-            except (AssertionError, KeyError) as exp:
+            except Exception as exp:
                 res[vm_name].append(f"check_boot_configuration - {str(exp)}")
 
         # Group 4: RHV-specific checks
