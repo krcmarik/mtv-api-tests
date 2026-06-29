@@ -729,6 +729,7 @@ class VMWareProvider(BaseProvider):
         # Guest OS
         result_vm_info["win_os"] = "win" in vm_config.guestId
 
+        # Firmware configuration — boot type, secure boot, TPM
         firmware_info: dict[str, Any] = {}
         boot_firmware_raw: str | None = vm_config.firmware
         if not boot_firmware_raw:

@@ -196,10 +196,12 @@ class OCPProvider(BaseProvider):
 
         firmware_spec: dict[str, Any] | None = domain.get("firmware")
         result_vm_info["serial"] = firmware_spec.get("serial") if firmware_spec else None
+        # Firmware configuration — boot type, secure boot, TPM
         firmware_info: dict[str, Any] = {}
 
         devices: dict[str, Any] = domain.get("devices", {})
         tpm_config: dict[str, Any] | None = devices.get("tpm")
+        # KubeVirt adds empty tpm: {} even for VMs without TPM; only persistent=true indicates actual TPM
         firmware_info["tpm_present"] = bool(tpm_config.get("persistent")) if tpm_config else False
 
         bootloader: dict[str, Any] | None = firmware_spec.get("bootloader") if firmware_spec else None
