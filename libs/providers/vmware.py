@@ -1510,6 +1510,8 @@ class VMWareProvider(BaseProvider):
         Raises:
             ValueError: If the cloned VM has no hardware device configuration
                 or a network device is missing deviceInfo.
+            VmCloneError: If NICs expected for MAC restoration are not found
+                in the cloned VM.
         """
         if not (vm.config and vm.config.hardware and vm.config.hardware.device):
             raise ValueError(f"Cloned VM '{clone_vm_name}' has no hardware device configuration")
@@ -1537,7 +1539,7 @@ class VMWareProvider(BaseProvider):
 
         unmatched = uppercase_mac_nics - {spec.device.deviceInfo.label for spec in reconfig_specs}
         if unmatched:
-            LOGGER.warning(f"NICs not found in cloned VM '{clone_vm_name}' for MAC restoration: {unmatched}")
+            raise VmCloneError(f"NICs not found in cloned VM '{clone_vm_name}' for MAC restoration: {unmatched}")
 
     @staticmethod
     def _get_bus_number_for_controller_key(
