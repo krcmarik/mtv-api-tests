@@ -736,10 +736,9 @@ class VMWareProvider(BaseProvider):
         boot_firmware: str = boot_firmware_raw.lower()
         firmware_info["boot_firmware"] = boot_firmware
         boot_options: vim.vm.BootOptions | None = vm_config.bootOptions
-        if boot_firmware == "efi" and boot_options is None:
-            raise ValueError(f"bootOptions is None for EFI VM '{_vm.name}' — expected boot configuration")
         if boot_firmware == "efi":
-            assert boot_options is not None  # Guaranteed by ValueError check above
+            if boot_options is None:
+                raise ValueError(f"bootOptions is None for EFI VM '{_vm.name}' — expected boot configuration")
             firmware_info["secure_boot"] = boot_options.efiSecureBootEnabled
         else:
             firmware_info["secure_boot"] = False
