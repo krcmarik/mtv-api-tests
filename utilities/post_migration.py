@@ -809,10 +809,12 @@ def check_vbs_status(
     source_provider_data: dict[str, Any],
     source_vm_info: dict[str, Any],
 ) -> None:
-    """Verify Virtualization Based Security (VBS) is disabled on a Windows VM.
+    """Verify Virtualization Based Security (VBS) is not running on a Windows VM.
 
     Connects via SSH to the Windows guest and queries the DeviceGuard WMI class
-    to confirm VirtualizationBasedSecurityStatus is 0 (disabled).
+    to confirm VirtualizationBasedSecurityStatus is not 2 (running).
+    Status 1 (enabled but not running) is expected when nested virtualization
+    extensions are disabled at the emulator level.
 
     Args:
         vm_name (str): Name of the VM to check
@@ -1570,7 +1572,7 @@ def check_vms(
                 res[vm_name].append(f"check_guest_agent - {str(exp)}")
 
         # SSH connectivity check - only when destination VM is powered on
-        if vm_ssh_connections and destination_vm.get("power_state") == "on":
+        if vm_ssh_connections is not None and destination_vm.get("power_state") == "on":
             try:
                 check_ssh_connectivity(
                     vm_name=destination_vm_name,
@@ -1621,7 +1623,7 @@ def check_vms(
                     )
                 except Exception as exp:
                     res[vm_name].append(f"check_nic_name_preservation - {str(exp)}")
-        elif vm_ssh_connections:
+        elif vm_ssh_connections is not None:
             LOGGER.info(
                 f"Skipping SSH connectivity check for VM {vm_name} - destination VM is not powered on "
                 f"(power_state: {destination_vm.get('power_state', 'unknown')})"
@@ -1671,7 +1673,7 @@ def check_vms(
             except Exception as exp:
                 res[vm_name].append(f"check_cpu_features - {str(exp)}")
 
-            if vm_ssh_connections and destination_vm.get("power_state") == "on" and source_vm.get("win_os"):
+            if vm_ssh_connections is not None and destination_vm.get("power_state") == "on" and source_vm.get("win_os"):
                 try:
                     check_vbs_status(
                         vm_name=destination_vm_name,
