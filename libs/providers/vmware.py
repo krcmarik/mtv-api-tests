@@ -1198,7 +1198,8 @@ class VMWareProvider(BaseProvider):
 
         Raises:
             ValueError: If the session_uuid is too long to build a valid clone name within
-                      63 characters when preserve_name_format is True.
+                      63 characters when preserve_name_format is True, or if a network
+                      device has no deviceInfo in the source VM config.
             VmCloneError: If the datastore or resource pool cannot be determined, or if
                         cloning fails.
 
@@ -1516,6 +1517,7 @@ class VMWareProvider(BaseProvider):
         if not (vm.config and vm.config.hardware and vm.config.hardware.device):
             raise ValueError(f"Cloned VM '{clone_vm_name}' has no hardware device configuration")
 
+        matched_labels: set[str] = set()
         reconfig_specs = []
         for dev in vm.config.hardware.device:
             if not isinstance(dev, vim.vm.device.VirtualEthernetCard):
@@ -1524,6 +1526,7 @@ class VMWareProvider(BaseProvider):
                 raise ValueError(f"Device has no deviceInfo in cloned VM '{clone_vm_name}'")
             if dev.deviceInfo.label not in uppercase_mac_nics:
                 continue
+            matched_labels.add(dev.deviceInfo.label)
             dev.macAddress = dev.macAddress.upper()
             dev.addressType = "manual"
             dev_spec = vim.vm.device.VirtualDeviceSpec()
@@ -1531,15 +1534,16 @@ class VMWareProvider(BaseProvider):
             dev_spec.device = dev
             reconfig_specs.append(dev_spec)
             LOGGER.info(f"Set manual MAC for {dev.deviceInfo.label}: {dev.macAddress}")
+
+        unmatched = uppercase_mac_nics - matched_labels
+        if unmatched:
+            raise VmCloneError(f"NICs not found in cloned VM '{clone_vm_name}' for MAC restoration: {unmatched}")
+
         if reconfig_specs:
             self.wait_task(
                 task=vm.ReconfigVM_Task(spec=vim.vm.ConfigSpec(deviceChange=reconfig_specs)),
                 action_name=f"Reconfiguring manual MACs on {clone_vm_name}",
             )
-
-        unmatched = uppercase_mac_nics - {spec.device.deviceInfo.label for spec in reconfig_specs}
-        if unmatched:
-            raise VmCloneError(f"NICs not found in cloned VM '{clone_vm_name}' for MAC restoration: {unmatched}")
 
     @staticmethod
     def _get_bus_number_for_controller_key(
