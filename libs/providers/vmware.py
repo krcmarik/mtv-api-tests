@@ -735,6 +735,8 @@ class VMWareProvider(BaseProvider):
         if not boot_firmware_raw:
             raise ValueError(f"firmware attribute is missing or empty for VM '{_vm.name}'")
         boot_firmware: str = boot_firmware_raw.lower()
+        if boot_firmware not in ("bios", "efi"):
+            raise ValueError(f"Unexpected firmware type '{boot_firmware}' for VM '{_vm.name}'")
         firmware_info["boot_firmware"] = boot_firmware
         boot_options: vim.vm.BootOptions | None = vm_config.bootOptions
         if boot_firmware == "efi":

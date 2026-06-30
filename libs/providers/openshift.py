@@ -122,7 +122,8 @@ class OCPProvider(BaseProvider):
             dict[str, Any]: VM information dictionary.
 
         Raises:
-            ValueError: If `ocp_resource` is not set or VM fails to start.
+            ValueError: If `ocp_resource` is not set, VM fails to start,
+                or secureBoot is missing from an EFI VM's firmware config.
             InvalidVMNameError: If destination VM name fails Kubernetes validation.
         """
         if not self.ocp_resource:

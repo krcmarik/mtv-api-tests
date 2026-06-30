@@ -1276,11 +1276,12 @@ def check_boot_configuration(source_vm: dict[str, Any], destination_vm: dict[str
         ("secure_boot", "Secure boot"),
         ("tpm_present", "TPM"),
     ]
+    mismatches: list[str] = []
     for key, label in firmware_checks:
-        assert source_firmware[key] == dest_firmware[key], (
-            f"{label} mismatch for VM '{destination_vm['name']}': "
-            f"source={source_firmware[key]}, destination={dest_firmware[key]}"
-        )
+        if source_firmware[key] != dest_firmware[key]:
+            mismatches.append(f"{label}: source={source_firmware[key]}, destination={dest_firmware[key]}")
+    if mismatches:
+        raise AssertionError(f"Firmware mismatch for VM '{destination_vm['name']}': {'; '.join(mismatches)}")
 
     LOGGER.info(
         f"Firmware checks passed for VM '{destination_vm['name']}': "
