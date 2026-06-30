@@ -37,6 +37,12 @@ KUBERNETES_MAX_GENERATE_NAME_PREFIX_LENGTH: int = 58
 
 _LUKS_FSTYPE = "crypto_LUKS"  # lsblk filesystem-type identifier for LUKS partitions
 
+_VBS_STATUS_RUNNING = "2"
+_NESTED_VIRT_DISABLED_FEATURES: list[dict[str, str]] = [
+    {"name": "vmx", "policy": "disable"},
+    {"name": "svm", "policy": "disable"},
+]
+
 
 def get_ssh_credentials_from_provider_config(
     source_provider_data: dict[str, Any], source_vm_info: dict[str, Any]
@@ -849,7 +855,7 @@ def check_vbs_status(
             raise ValueError(f"VBS status command failed on VM '{vm_name}'. rc={rc}, stderr={err}")
 
         vbs_status = stdout.strip()
-        assert vbs_status != "2", (
+        assert vbs_status != _VBS_STATUS_RUNNING, (
             f"VBS is still running on VM '{vm_name}'. "
             f"VirtualizationBasedSecurityStatus: {vbs_status}, expected: not 2 (not running)"
         )
@@ -1656,8 +1662,7 @@ def check_vms(
             except Exception as exp:
                 res[vm_name].append(f"check_vm_affinity - {str(exp)}")
 
-        # Nested virtualization checks — when enableNestedVirtualization is explicitly False
-        # Supported by all providers except OpenShift (OCP→OCP)
+        # Nested virtualization checks not applicable for OCP→OCP migrations
         if (
             plan.get("enable_nested_virtualization") is False
             and source_provider.type != Provider.ProviderType.OPENSHIFT
@@ -1665,10 +1670,7 @@ def check_vms(
             try:
                 check_cpu_features(
                     destination_vm=destination_vm,
-                    expected_features=[
-                        {"name": "vmx", "policy": "disable"},
-                        {"name": "svm", "policy": "disable"},
-                    ],
+                    expected_features=_NESTED_VIRT_DISABLED_FEATURES,
                 )
             except Exception as exp:
                 res[vm_name].append(f"check_cpu_features - {str(exp)}")
