@@ -591,8 +591,9 @@ For technical implementation details, see the
 
 ## LUKS Disk Encryption Migration (tier1)
 
-The test suite includes migration tests for VMs with LUKS-encrypted disks. These tests verify that
-LUKS encryption is preserved after cold migration by checking `lsblk` output on the migrated VM.
+This test suite verifies MTV's ability to migrate LUKS-encrypted VMs. It validates both
+successful cold migration when the correct decryption passphrase is provided, and expected
+failure at the ImageConversion phase when an incorrect LUKS decryption passphrase is used.
 
 ### Configuration
 
