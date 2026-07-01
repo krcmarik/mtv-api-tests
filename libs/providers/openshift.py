@@ -285,6 +285,9 @@ class OCPProvider(BaseProvider):
 
         result_vm_info["cpu"]["num_cores"] = cnv_vm.vmi.instance.spec.domain.cpu.cores
         result_vm_info["cpu"]["num_sockets"] = cnv_vm.vmi.instance.spec.domain.cpu.sockets
+        # CPU features are read from the VM template spec (not VMI) because features are configured at template level.
+        template_cpu: dict[str, Any] = cnv_vm.instance.spec.template.spec.domain.get("cpu", {})
+        result_vm_info["cpu"]["features"] = list(template_cpu.get("features", []))
 
         result_vm_info["memory_in_mb"] = int(
             humanfriendly.parse_size(

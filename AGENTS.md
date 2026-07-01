@@ -648,7 +648,9 @@ if not vm_id:
 
 - `.get("key", <default>)` on `py_config`, `plan`, `tests_params`, or any dict we control
 - `.get("key")` on external data without validation afterward
-- Using `False` as default when the key is always present in config (exception: `warm_migration` and `copyoffload` are optional flags — `.get()` is correct)
+- Using `False` as default when the key is always present in config
+  (exception: `warm_migration`, `copyoffload`, and `enable_nested_virtualization`
+  are optional flags — `.get()` is correct)
 
 ### Provider Config Key Access (MUST)
 
