@@ -1675,7 +1675,11 @@ def check_vms(
             except Exception as exp:
                 res[vm_name].append(f"check_cpu_features - {str(exp)}")
 
-            if vm_ssh_connections is not None and destination_vm.get("power_state") == "on" and source_vm.get("win_os"):
+            if (
+                vm_ssh_connections is not None
+                and destination_vm.get("power_state") == "on"
+                and source_vm.get("win_os", False)
+            ):
                 try:
                     check_vbs_status(
                         vm_name=destination_vm_name,
