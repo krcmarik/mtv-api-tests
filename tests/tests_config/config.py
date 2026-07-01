@@ -584,6 +584,7 @@ tests_params: dict = {
         "warm_migration": True,
         "target_power_state": "on",
         "preserve_static_ips": True,
+        "enable_nested_virtualization": False,
         "vm_target_namespace": f"mtv-vms-warm-comprehensive-{uuid.uuid4().hex[:4]}",
         "multus_namespace": "default",  # Cross-namespace NAD access
         "pvc_name_template": '{{ .FileName | trimSuffix ".vmdk" | replace "_" "-" }}-{{.DiskIndex}}',
@@ -618,6 +619,7 @@ tests_params: dict = {
         "warm_migration": False,
         "target_power_state": "on",
         "preserve_static_ips": True,
+        "enable_nested_virtualization": False,
         "pvc_name_template": "{{.VmName}}-disk-{{.DiskIndex}}",
         "pvc_name_template_use_generate_name": False,
         "target_node_selector": {

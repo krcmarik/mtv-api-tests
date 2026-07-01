@@ -46,6 +46,7 @@ class TestWarmMigrationComprehensive:
 
     Tests the following MTV 2.10.0+ features:
     - Static IP preservation
+    - Nested virtualization and VBS verification
     - Custom VM target namespace
     - Custom PVC naming template
     - PVC naming with generateName
@@ -186,6 +187,7 @@ class TestWarmMigrationComprehensive:
             pvc_name_template_use_generate_name=prepared_plan["pvc_name_template_use_generate_name"],
             target_labels=target_vm_labels["vm_labels"],
             target_affinity=prepared_plan["target_affinity"],
+            enable_nested_virtualization=prepared_plan["enable_nested_virtualization"],
         )
         assert self.plan_resource, "Plan creation failed"
 
