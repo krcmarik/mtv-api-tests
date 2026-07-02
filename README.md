@@ -272,6 +272,7 @@ The Quick Start runs **tier0** tests (smoke tests). You can run other test categ
 | `copyoffload_sanity` | Copy-offload sanity subset (see below) | Quick copy-offload validation |
 | `warm` | Warm migrations (VMs stay running) | Specific scenario testing |
 | `upgrade` | Migration across MTV operator upgrades | Validating upgrade compatibility |
+| `vsphere` | vSphere-specific tests (XFS, etc.) | Testing vSphere specific scenarios |
 
 ### Copy-Offload Sanity Tests
 

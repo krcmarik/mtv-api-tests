@@ -25,7 +25,7 @@ from libs.base_provider import BaseProvider
 from libs.forklift_inventory import ForkliftInventory
 from libs.providers.rhv import OvirtProvider
 from utilities.naming import resolve_destination_vm_name
-from utilities.ssh_utils import SSHConnectionManager, VMSSHConnection
+from utilities.ssh_utils import SSHConnectionManager, VMSSHConnection, run_cmd_in_vm
 from utilities.utils import get_cluster_version, get_value_from_py_config, rhv_provider
 from utilities.vmware_guest_operations import DATA_INTEGRITY_FILE
 
@@ -1507,6 +1507,53 @@ def check_ssl_configuration(source_provider: BaseProvider) -> None:
     )
 
     LOGGER.info(f"SSL configuration verified: insecureSkipVerify='{actual_value}' matches config")
+
+
+def check_vm_command_output(
+    vm: dict[str, Any],
+    vm_ssh_connections: SSHConnectionManager,
+    source_vm_info: dict[str, Any],
+    source_provider_data: dict[str, Any],
+    command: list[str],
+    expected_output: str,
+) -> None:
+    """Execute a command on VM via SSH and verify expected output is present.
+
+    Args:
+        vm: VM dict from plan["virtual_machines"]
+        vm_ssh_connections: SSH connections fixture manager
+        source_vm_info: Source VM information from source_provider.vm_dict()
+        source_provider_data: Provider configuration from .providers.json
+        command: Command to execute
+        expected_output: Expected string in command output
+
+    Raises:
+        ValueError: If VM is Windows (Linux-only feature)
+        AssertionError: If expected_output not found in command stdout
+    """
+    vm_name = vm["name"]
+    destination_vm_name = resolve_destination_vm_name(vm)
+
+    if source_vm_info.get("win_os", False):
+        raise ValueError(
+            f"Command output verification is only supported on Linux guests. VM '{vm_name}' is a Windows guest."
+        )
+
+    LOGGER.info(f"Running command on VM {destination_vm_name}: {' '.join(command)}")
+
+    ssh_username, ssh_password = get_ssh_credentials_from_provider_config(source_provider_data, source_vm_info)
+    ssh_conn = vm_ssh_connections.create(vm_name=destination_vm_name, username=ssh_username, password=ssh_password)
+
+    with ssh_conn:
+        stdout = run_cmd_in_vm(ssh_conn, command, f"Command on VM {destination_vm_name}")
+        LOGGER.info(f"Command output:\n{stdout}")
+
+        if expected_output not in stdout:
+            raise AssertionError(
+                f"Expected '{expected_output}' not found in command output on VM {destination_vm_name}. "
+                f"Command: {' '.join(command)}\n"
+                f"Output: {stdout}"
+            )
 
 
 def check_vms(

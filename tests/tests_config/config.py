@@ -708,6 +708,40 @@ tests_params: dict = {
         ],
         "warm_migration": False,
     },
+    "test_warm_migration_xfs": {
+        "virtual_machines": [
+            {
+                "name": "mtv-feature-rhel7-xfs",
+                "source_vm_power": "on",
+                "guest_agent": True,
+            },
+        ],
+        "warm_migration": True,
+        "target_power_state": "on",
+        "xfs_compatibility": True,
+        "xfs_check": {
+            "command": "/usr/sbin/xfs_info",
+            "mount_point": "/",
+            "expected_output": "crc=0",
+        },
+    },
+    "test_cold_migration_xfs": {
+        "virtual_machines": [
+            {
+                "name": "mtv-feature-rhel8-2xfs",
+                "source_vm_power": "on",
+                "guest_agent": True,
+            },
+        ],
+        "warm_migration": False,
+        "target_power_state": "on",
+        "xfs_compatibility": True,
+        "xfs_check": {
+            "command": "/usr/sbin/xfs_info",
+            "mount_point": "/sdb1",
+            "expected_output": "crc=0",
+        },
+    },
 }
 
 for _dir in dir():

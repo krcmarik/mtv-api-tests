@@ -637,6 +637,7 @@ storage_class = py_config["storage_class"]
 # Correct — .get() for optional feature flags (not present in every test config)
 warm_migration = plan.get("warm_migration", False)
 copyoffload = plan.get("copyoffload", False)
+xfs_compatibility = plan.get("xfs_compatibility", False)
 
 # Correct — .get() with validation for external data
 vm_id = provider_data.get("vm_id")
@@ -649,7 +650,7 @@ if not vm_id:
 - `.get("key", <default>)` on `py_config`, `plan`, `tests_params`, or any dict we control
 - `.get("key")` on external data without validation afterward
 - Using `False` as default when the key is always present in config
-  (exception: `warm_migration`, `copyoffload`, and `enable_nested_virtualization`
+  (exception: `warm_migration`, `copyoffload`, `enable_nested_virtualization` and `xfs_compatibility`
   are optional flags — `.get()` is correct)
 
 ### Provider Config Key Access (MUST)
@@ -804,12 +805,18 @@ class TestNameHere:
   `test_verify_luks_encryption` calls `verify_luks_encryption()` from `utilities/post_migration.py`. LUKS
   secret setup is handled by the `luks_vm_specs` fixture in `tests/luks/conftest.py`, which resolves
   passphrases (per-VM override → provider fallback) and creates K8s Secrets.
+- **6-step XFS pattern**: storagemap -> networkmap -> plan -> migrate -> verify_xfs_version -> check_vms
+  XFS migration tests insert `test_verify_xfs_version` before `test_check_vms`. This step executes
+  `xfs_info` on the migrated VM to verify XFS v4 filesystem compatibility (validates `crc=0` in output).
+  Uses `check_vm_command_output()` from `utilities/post_migration.py`.
+  Requires `xfs_compatibility: True` in plan config and `xfs_check` config dict.
 
 **Test method naming:** Base tests: `test_create_storagemap`, `test_create_networkmap`, `test_create_plan`,
 `test_migrate_vms`, `test_check_vms`. Copy-offload tests: same through `test_migrate_vms`, then
 `test_check_xcopy_used`, `test_check_vms`. Copy-offload throttling tests: same through `test_migrate_vms`, then
 `test_verify_populator_throttling`, `test_check_xcopy_used`, `test_check_vms`. LUKS tests: same through `test_migrate_vms`, then
-`test_verify_luks_encryption`, `test_check_vms`.
+`test_verify_luks_encryption`, `test_check_vms`. XFS tests: same through `test_migrate_vms`, then
+`test_verify_xfs_version`, `test_check_vms`.
 
 **Fixture parameters:** Each test method requests only the fixtures it needs. The example shows typical patterns.
 
@@ -843,6 +850,24 @@ tests_params: dict = {
 | `disk_type`       | No       | "thin", "thick-lazy", "thick-eager" |
 | `luks`            | No       | True if VM has LUKS-encrypted disk  |
 | `luks_passphrase` | No       | Per-VM passphrase override          |
+
+**Plan Configuration Options:**
+
+| Option                | Required | Description                                           |
+| --------------------- | -------- | ----------------------------------------------------- |
+| `warm_migration`      | No       | True for warm migration                               |
+| `preserve_static_ips` | No       | True to preserve static IP addresses after migration  |
+| `copyoffload`         | No       | True to enable copy-offload (XCOPY) migration         |
+| `xfs_compatibility`   | No       | True to enable XFS v4 filesystem compatibility        |
+
+**Test Verification Configuration:**
+
+| Option                      | Required | Description                                                     |
+| --------------------------- | -------- | --------------------------------------------------------------- |
+| `xfs_check`                 | Yes*     | XFS filesystem verification config. Required for XFS tests      |
+| `xfs_check.command`         | Yes*     | Command to execute. Required when `xfs_check` is present        |
+| `xfs_check.mount_point`     | Yes*     | Mount point to check. Required when `xfs_check` is present      |
+| `xfs_check.expected_output` | Yes*     | Expected string in output. Required when `xfs_check` is present |
 
 ## Fixture Patterns
 
@@ -931,15 +956,16 @@ Class-scoped teardown fixture that cleans up migrated VMs after each test class 
 
 ## Test Markers
 
-| Marker                  | Purpose                               |
-| ----------------------- | ------------------------------------- |
-| `tier0`                 | Core functionality (smoke tests)      |
-| `tier1`                 | Extended functionality tests          |
-| `warm`                  | Warm migration tests                  |
-| `remote`                | Remote cluster tests                  |
-| `copyoffload`           | Copy-offload (XCOPY) tests            |
-| `copyoffload_sanity`    | Copy-offload sanity subset            |
-| `copyoffload_snapshots` | Copy-offload snapshot tests (vSphere) |
+| Marker                  | Purpose                                |
+| ----------------------- | -------------------------------------- |
+| `tier0`                 | Core functionality (smoke tests)       |
+| `tier1`                 | Extended functionality tests           |
+| `warm`                  | Warm migration tests                   |
+| `remote`                | Remote cluster tests                   |
+| `copyoffload`           | Copy-offload (XCOPY) tests             |
+| `copyoffload_sanity`    | Copy-offload sanity subset             |
+| `copyoffload_snapshots` | Copy-offload snapshot tests (vSphere)  |
+| `vsphere`               | VMware vSphere provider-specific tests |
 
 **Marker requirements for collection-time skipping (MUST):**
 

@@ -17,41 +17,12 @@ from timeout_sampler import TimeoutExpiredError, TimeoutSampler
 from exceptions.exceptions import GuestCommandError
 from utilities.naming import resolve_destination_vm_name
 from utilities.post_migration import get_ssh_credentials_from_provider_config
-from utilities.ssh_utils import SSHConnectionManager, VMSSHConnection
+from utilities.ssh_utils import SSHConnectionManager, VMSSHConnection, run_cmd_in_vm
 
 if TYPE_CHECKING:
     from kubernetes.dynamic import DynamicClient
 
 LOGGER = get_logger(name=__name__)
-
-
-def _run_cmd_on_vm(
-    ssh_conn: VMSSHConnection,
-    cmd: list[str],
-    description: str,
-) -> str:
-    """Execute a command on a VM via SSH using the explicit executor pattern.
-
-    Uses the same approach as check_static_ip_preservation() in post_migration.py:
-    creates an executor with the correct user and port-forward port.
-
-    Args:
-        ssh_conn (VMSSHConnection): SSH connection object (must be connected via context manager).
-        cmd (list[str]): Command to execute.
-        description (str): Human-readable description for logging.
-
-    Returns:
-        str: Command stdout.
-
-    Raises:
-        GuestCommandError: If the command fails (non-zero return code).
-    """
-    executor = ssh_conn.rrmngmnt_host.executor(user=ssh_conn.rrmngmnt_user)  # type: ignore[union-attr]
-    executor.port = ssh_conn.local_port
-    rc, stdout, stderr = executor.run_cmd(cmd)
-    if rc != 0:
-        raise GuestCommandError(f"{description} failed (rc={rc}): {stderr}")
-    return stdout
 
 
 def _mount_shared_partition(ssh_conn: VMSSHConnection, partition: str, mount_point: str, vm_label: str) -> None:
@@ -66,8 +37,8 @@ def _mount_shared_partition(ssh_conn: VMSSHConnection, partition: str, mount_poi
     Raises:
         GuestCommandError: If mkdir or mount command fails.
     """
-    _run_cmd_on_vm(ssh_conn, ["sudo", "mkdir", "-p", mount_point], f"{vm_label} mkdir")
-    _run_cmd_on_vm(ssh_conn, ["sudo", "mount", partition, mount_point], f"{vm_label} mount")
+    run_cmd_in_vm(ssh_conn, ["sudo", "mkdir", "-p", mount_point], f"{vm_label} mkdir")
+    run_cmd_in_vm(ssh_conn, ["sudo", "mount", partition, mount_point], f"{vm_label} mount")
 
 
 def _umount_shared_partition(ssh_conn: VMSSHConnection, mount_point: str, vm_label: str) -> None:
@@ -81,7 +52,7 @@ def _umount_shared_partition(ssh_conn: VMSSHConnection, mount_point: str, vm_lab
     Raises:
         GuestCommandError: If umount command fails.
     """
-    _run_cmd_on_vm(ssh_conn, ["sudo", "umount", mount_point], f"{vm_label} umount")
+    run_cmd_in_vm(ssh_conn, ["sudo", "umount", mount_point], f"{vm_label} umount")
 
 
 def _write_marker(ssh_conn: VMSSHConnection, file_path: str, content: str, vm_label: str) -> None:
@@ -96,12 +67,12 @@ def _write_marker(ssh_conn: VMSSHConnection, file_path: str, content: str, vm_la
     Raises:
         GuestCommandError: If write or sync command fails.
     """
-    _run_cmd_on_vm(
+    run_cmd_in_vm(
         ssh_conn,
         ["sh", "-c", f"echo {shlex.quote(content)} | sudo tee {shlex.quote(file_path)} > /dev/null"],
         f"{vm_label} write test data",
     )
-    _run_cmd_on_vm(ssh_conn, ["sudo", "sync"], f"{vm_label} sync")
+    run_cmd_in_vm(ssh_conn, ["sudo", "sync"], f"{vm_label} sync")
 
 
 _VMI_VOLUME_STATUS_TIMEOUT = 300
@@ -286,7 +257,7 @@ def verify_shared_disk_data(
         with ssh_vm2:
             _mount_shared_partition(ssh_vm2, vm2_partition, mount_point, "VM2")
 
-            vm2_read_data = _run_cmd_on_vm(ssh_vm2, ["sudo", "cat", test_file_vm1], "VM2 read VM1 data")
+            vm2_read_data = run_cmd_in_vm(ssh_vm2, ["sudo", "cat", test_file_vm1], "VM2 read VM1 data")
             assert "Data from VM1" in vm2_read_data.strip(), f"VM2 cannot read VM1's data: {vm2_read_data}"
             LOGGER.info(f"VM2 ({vm2_name}): Successfully read VM1's data")
 
@@ -298,10 +269,10 @@ def verify_shared_disk_data(
         # Flush block device buffers to clear stale kernel cache.
         # XFS (non-cluster filesystem) retains metadata in kernel buffer cache.
         # Without this, VM1 won't see VM2's newly written files even after remount.
-        _run_cmd_on_vm(ssh_vm1, ["sudo", "blockdev", "--flushbufs", vm1_device], "VM1 flush buffers")
-        _run_cmd_on_vm(ssh_vm1, ["sudo", "mount", vm1_partition, mount_point], "VM1 remount")
+        run_cmd_in_vm(ssh_vm1, ["sudo", "blockdev", "--flushbufs", vm1_device], "VM1 flush buffers")
+        run_cmd_in_vm(ssh_vm1, ["sudo", "mount", vm1_partition, mount_point], "VM1 remount")
 
-        vm1_read_data = _run_cmd_on_vm(ssh_vm1, ["sudo", "cat", test_file_vm2], "VM1 read VM2 data")
+        vm1_read_data = run_cmd_in_vm(ssh_vm1, ["sudo", "cat", test_file_vm2], "VM1 read VM2 data")
         assert "Data from VM2" in vm1_read_data.strip(), f"VM1 cannot read VM2's data: {vm1_read_data}"
         LOGGER.info(f"VM1 ({vm1_name}): Successfully read VM2's data")
 
