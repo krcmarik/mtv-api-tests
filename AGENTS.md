@@ -785,10 +785,14 @@ class TestNameHere:
 - **Shared state**: Store resources on class with `self.__class__.attribute`
 - **Test ordering**: Use `@pytest.mark.incremental` at class level for sequential test dependencies
 - **5-step pattern**: storagemap -> networkmap -> plan -> migrate -> check_vms
-- **6-step shared-disk pattern**: storagemap -> networkmap -> plan -> migrate -> verify_shared_disk_data -> check_vms
+- **6-step shared-disk pattern (Linux)**: storagemap -> networkmap -> plan -> migrate -> verify_shared_disk_data -> check_vms
   Shared disk tests insert `test_verify_shared_disk_data` before `test_check_vms`. This step mounts,
   writes, and reads a shared disk from both VMs to verify bidirectional access after migration.
   Uses `verify_shared_disk_data()` from `utilities/shared_disk.py`.
+- **7-step shared-disk pattern (Windows)**: label_shared_disk -> storagemap -> networkmap -> plan -> migrate -> verify_shared_disk_data -> check_vms
+  Windows shared disk tests prepend `test_label_shared_disk` which dynamically labels the shared NTFS
+  volume on the source VM via VMware Guest Operations API before migration. Post-migration verification
+  uses `verify_shared_disk_data_windows()` from `utilities/shared_disk.py`.
 - **6-step copy-offload pattern**: storagemap -> networkmap -> plan -> migrate -> check_xcopy_used -> check_vms
   `test_check_xcopy_used` calls `verify_xcopy_used()` from `utilities/copyoffload_migration.py`. This step
   validates the transfer mechanism (infrastructure), not the migrated VM (application), and provides
@@ -812,7 +816,9 @@ class TestNameHere:
   Requires `xfs_compatibility: True` in plan config and `xfs_check` config dict.
 
 **Test method naming:** Base tests: `test_create_storagemap`, `test_create_networkmap`, `test_create_plan`,
-`test_migrate_vms`, `test_check_vms`. Copy-offload tests: same through `test_migrate_vms`, then
+`test_migrate_vms`, `test_check_vms`. Shared-disk Linux tests: same through `test_migrate_vms`, then
+`test_verify_shared_disk_data`, `test_check_vms`. Shared-disk Windows tests: `test_label_shared_disk`,
+then the base five through `test_migrate_vms`, then `test_verify_shared_disk_data`, `test_check_vms`. Copy-offload tests: same through `test_migrate_vms`, then
 `test_check_xcopy_used`, `test_check_vms`. Copy-offload throttling tests: same through `test_migrate_vms`, then
 `test_verify_populator_throttling`, `test_check_xcopy_used`, `test_check_vms`. LUKS tests: same through `test_migrate_vms`, then
 `test_verify_luks_encryption`, `test_check_vms`. XFS tests: same through `test_migrate_vms`, then
@@ -837,19 +843,20 @@ tests_params: dict = {
 2. Create a test class with `@pytest.mark.parametrize` using `class_plan_config` and `indirect=True`
 3. Add pytest markers at class level (tier0, tier1, warm, remote, copyoffload)
 4. Implement the 5 base test methods. Some features need extra validation steps: see **Key Patterns** for the
-   6-step shared-disk, copy-offload, and LUKS patterns, or the 7-step copy-offload throttling pattern
+   6-step shared-disk (Linux), 7-step shared-disk (Windows), copy-offload, and LUKS patterns, or the 7-step copy-offload throttling pattern
 
 **VM Configuration Options:**
 
-| Option            | Required | Values                              |
-| ----------------- | -------- | ----------------------------------- |
-| `name`            | Yes      | VM name in source provider          |
-| `source_vm_power` | No       | "on" or "off"                       |
-| `guest_agent`     | No       | True if installed                   |
-| `clone`           | No       | True to clone before migration      |
-| `disk_type`       | No       | "thin", "thick-lazy", "thick-eager" |
-| `luks`            | No       | True if VM has LUKS-encrypted disk  |
-| `luks_passphrase` | No       | Per-VM passphrase override          |
+| Option                 | Required | Values                                   |
+| ---------------------- | -------- | ---------------------------------------- |
+| `name`                 | Yes      | VM name in source provider               |
+| `source_vm_power`      | No       | "on" or "off"                            |
+| `guest_agent`          | No       | True if installed                        |
+| `clone`                | No       | True to clone before migration           |
+| `disk_type`            | No       | "thin", "thick-lazy", "thick-eager"      |
+| `luks`                 | No       | True if VM has LUKS-encrypted disk       |
+| `luks_passphrase`      | No       | Per-VM passphrase override               |
+| `migrate_shared_disks` | No       | True for owner VM in shared disk tests   |
 
 **Plan Configuration Options:**
 
@@ -859,6 +866,7 @@ tests_params: dict = {
 | `preserve_static_ips` | No       | True to preserve static IP addresses after migration  |
 | `copyoffload`         | No       | True to enable copy-offload (XCOPY) migration         |
 | `xfs_compatibility`   | No       | True to enable XFS v4 filesystem compatibility        |
+| `migrate_shared_disks`| No       | True to enable shared disk migration at plan level    |
 
 **Test Verification Configuration:**
 
@@ -966,6 +974,7 @@ Class-scoped teardown fixture that cleans up migrated VMs after each test class 
 | `copyoffload_sanity`    | Copy-offload sanity subset             |
 | `copyoffload_snapshots` | Copy-offload snapshot tests (vSphere)  |
 | `vsphere`               | VMware vSphere provider-specific tests |
+| `shared_disk`           | Shared disk migration tests            |
 
 **Marker requirements for collection-time skipping (MUST):**
 

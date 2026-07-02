@@ -1599,6 +1599,20 @@ class VMWareProvider(BaseProvider):
 
         return None
 
+    def find_shared_vmdk_paths(self, vm_names: list[str]) -> dict[str, list[tuple[int, int, int]]]:
+        """Find VMDKs shared across multiple VMs.
+
+        Args:
+            vm_names (list[str]): Source VM names to scan.
+
+        Returns:
+            dict[str, list[tuple[int, int, int]]]: Mapping of shared VMDK backing-file
+                paths to their SCSI positions. Each tuple is ``(vm_index, bus_number,
+                unit_number)`` where ``vm_index`` is the index into the caller-supplied
+                ``vm_names`` list.
+        """
+        return self._find_shared_vmdks(self._build_vmdk_position_map(vm_names))
+
     def _build_vmdk_position_map(
         self,
         source_vm_names: list[str],
