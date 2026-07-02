@@ -867,7 +867,25 @@ def check_memory(source_vm: dict[str, Any], destination_vm: dict[str, Any]) -> N
 
 
 def get_nic_by_mac(nics: list[dict[str, Any]], mac_address: str) -> dict[str, Any]:
-    return [nic for nic in nics if nic["macAddress"] == mac_address][0]
+    """Get a NIC from a list of NICs by MAC address (case-insensitive).
+
+    Args:
+        nics (list[dict[str, Any]]): List of NIC dictionaries with "macAddress" keys.
+        mac_address (str): The MAC address to search for.
+
+    Returns:
+        dict[str, Any]: The matching NIC dictionary.
+
+    Raises:
+        ValueError: If no NIC matches the MAC address.
+    """
+    matched = [nic for nic in nics if nic["macAddress"].lower() == mac_address.lower()]
+    if not matched:
+        raise ValueError(
+            f"No NIC found with MAC address '{mac_address}' in {len(nics)} NICs "
+            f"(available: {[n['macAddress'] for n in nics]})"
+        )
+    return matched[0]
 
 
 def check_network(source_vm: dict[str, Any], destination_vm: dict[str, Any], network_migration_map: NetworkMap) -> None:
