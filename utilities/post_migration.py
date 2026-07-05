@@ -1365,6 +1365,39 @@ def check_serial_preservation(
         LOGGER.info(f"Serial preserved correctly (OCP {ocp_version} < 4.20, plain UUID): {dest_serial}")
 
 
+def check_boot_configuration(source_vm: dict[str, Any], destination_vm: dict[str, Any]) -> None:
+    """Verify boot configuration is preserved after migration.
+
+    Args:
+        source_vm: Source VM info dictionary with firmware data.
+        destination_vm: Destination VM info dictionary with firmware data.
+
+    Raises:
+        AssertionError: If firmware type, secure boot, or TPM settings don't match.
+        KeyError: If required firmware keys are missing in source or destination VM info.
+    """
+    source_firmware: dict[str, Any] = source_vm["firmware"]
+    dest_firmware: dict[str, Any] = destination_vm["firmware"]
+
+    firmware_checks: list[tuple[str, str]] = [
+        ("boot_firmware", "Boot firmware"),
+        ("secure_boot", "Secure boot"),
+        ("tpm_present", "TPM"),
+    ]
+    mismatches: list[str] = []
+    for key, label in firmware_checks:
+        if source_firmware[key] != dest_firmware[key]:
+            mismatches.append(f"{label}: source={source_firmware[key]}, destination={dest_firmware[key]}")
+    if mismatches:
+        raise AssertionError(f"Firmware mismatch for VM '{destination_vm['name']}': {'; '.join(mismatches)}")
+
+    LOGGER.info(
+        f"Firmware checks passed for VM '{destination_vm['name']}': "
+        f"boot={dest_firmware['boot_firmware']}, secure_boot={dest_firmware['secure_boot']}, "
+        f"tpm={dest_firmware['tpm_present']}"
+    )
+
+
 def check_vm_node_placement(
     destination_vm: dict[str, Any],
     expected_node: str,
@@ -1817,6 +1850,11 @@ def check_vms(
                 )
             except Exception as exp:
                 res[vm_name].append(f"check_serial_preservation - {str(exp)}")
+
+            try:
+                check_boot_configuration(source_vm=source_vm, destination_vm=destination_vm)
+            except Exception as exp:
+                res[vm_name].append(f"check_boot_configuration - {str(exp)}")
 
         # Group 4: RHV-specific checks
         if rhv_provider(source_provider_data) and isinstance(source_provider, OvirtProvider):

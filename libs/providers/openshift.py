@@ -122,7 +122,8 @@ class OCPProvider(BaseProvider):
             dict[str, Any]: VM information dictionary.
 
         Raises:
-            ValueError: If `ocp_resource` is not set or VM fails to start.
+            ValueError: If `ocp_resource` is not set, VM fails to start,
+                or secureBoot is missing from an EFI VM's firmware config.
             InvalidVMNameError: If destination VM name fails Kubernetes validation.
         """
         if not self.ocp_resource:
@@ -192,8 +193,32 @@ class OCPProvider(BaseProvider):
         )
 
         # Serial number (from firmware) - for serial preservation verification
-        firmware_spec: dict[str, Any] | None = cnv_vm.instance.spec.template.spec.domain.get("firmware")
+        domain: dict[str, Any] = cnv_vm.instance.spec.template.spec.domain
+
+        firmware_spec: dict[str, Any] | None = domain.get("firmware")
         result_vm_info["serial"] = firmware_spec.get("serial") if firmware_spec else None
+        # Firmware configuration — boot type, secure boot, TPM
+        firmware_info: dict[str, Any] = {}
+
+        devices: dict[str, Any] = domain.get("devices", {})
+        tpm_config: dict[str, Any] | None = devices.get("tpm")
+        # KubeVirt adds empty tpm: {} even for VMs without TPM; only persistent=true indicates actual TPM
+        firmware_info["tpm_present"] = bool(tpm_config.get("persistent")) if tpm_config else False
+
+        bootloader: dict[str, Any] | None = firmware_spec.get("bootloader") if firmware_spec else None
+        efi_config: dict[str, Any] | None = bootloader.get("efi") if bootloader else None
+
+        if efi_config:
+            firmware_info["boot_firmware"] = "efi"
+            secure_boot: bool | None = efi_config.get("secureBoot")
+            if secure_boot is None:
+                raise ValueError(f"secureBoot not found in EFI config for VM '{cnv_vm_name}'")
+            firmware_info["secure_boot"] = secure_boot
+        else:
+            firmware_info["boot_firmware"] = "bios"
+            firmware_info["secure_boot"] = False
+
+        result_vm_info["firmware"] = firmware_info
 
         # Extract template once to avoid duplicate attribute access
         template = cnv_vm.instance.spec.template
