@@ -797,9 +797,24 @@ class TestNameHere:
   `test_check_xcopy_used` calls `verify_xcopy_used()` from `utilities/copyoffload_migration.py`. This step
   validates the transfer mechanism (infrastructure), not the migrated VM (application), and provides
   clearer failure diagnostics.
-  **Plan populator secret wait:** After Migration CR creation in `execute_migration()`, call
-  `wait_for_copyoffload_plan_secret()` from `utilities/copyoffload_plan_secret.py`. Do not wait in
-  `create_plan_resource()` — Forklift creates the plan populator secret when migration starts, not at Plan Ready.
+
+  **Copy-offload test implementation:**
+  - **Default approach:** Use `execute_copyoffload_migration()` from `utilities/copyoffload_migration.py`
+    for standard copy-offload tests. This function handles all orchestration: Migration CR creation,
+    plan secret waiting, log capture callback setup, and migration polling.
+  - **Populator throttling tests:** Use `execute_migration_monitoring_populator_inflight()` from
+    `utilities/copyoffload_migration.py` for tests that need to track populator concurrency during
+    migration. This function combines migration execution with populator in-flight monitoring and
+    log capture callback setup, ensuring both concurrency tracking and populate pod logs are
+    collected during migration polling.
+  - **Concurrent migrations only:** For tests running multiple migrations simultaneously (see
+    `TestSimultaneousCopyoffloadMigrations.test_migrate_vms_simultaneously` in
+    `tests/copyoffload/test_copyoffload_migration.py`), use the low-level orchestration:
+    `wait_for_copyoffload_plan_secret()`, `create_log_capture_callback()`,
+    `wait_for_dual_migration_completion()` (from `utilities/mtv_migration.py` for two-plan tests),
+    and `wait_for_migration_complate(on_status_poll=...)` to manage each migration independently.
+
+  Do not wait for plan secret in `create_plan_resource()` — Forklift creates the plan populator secret when migration starts, not at Plan Ready.
 - **7-step copy-offload throttling pattern**: storagemap -> networkmap -> plan -> migrate -> `verify_populator_throttling` -> check_xcopy_used -> check_vms
   Populator throttling tests insert `test_verify_populator_throttling` after `test_migrate_vms` and before
   `test_check_xcopy_used`. This step calls `verify_populator_throttling()` from `utilities/copyoffload_migration.py`
