@@ -721,6 +721,12 @@ tests_params: dict = {
         "migrate_shared_disks": True,
         "target_power_state": "on",
     },
+    "test_ca_crt_cold_migration": {
+        "virtual_machines": [
+            {"name": "mtv-tests-rhel8", "guest_agent": True},
+        ],
+        "warm_migration": False,
+    },
     "test_upgrade_cold_migration": {
         "virtual_machines": [
             {"name": "mtv-tests-rhel8", "guest_agent": True},

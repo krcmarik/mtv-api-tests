@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import abc
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kubernetes.dynamic.client import DynamicClient
 from ocp_resources.persistent_volume_claim import PersistentVolumeClaim
@@ -8,7 +10,59 @@ from ocp_resources.route import Route
 from simple_logger.logger import get_logger
 from timeout_sampler import TimeoutExpiredError, TimeoutSampler
 
+if TYPE_CHECKING:
+    from libs.base_provider import BaseProvider
+
+PROVIDER_INVENTORY_MAP: dict[str, type[ForkliftInventory]] = {}
+
 LOGGER = get_logger(__name__)
+
+
+def _register_inventory_classes() -> None:
+    """Populate PROVIDER_INVENTORY_MAP after all classes are defined."""
+    PROVIDER_INVENTORY_MAP.update({
+        Provider.ProviderType.OVA: OvaForkliftInventory,
+        Provider.ProviderType.RHV: OvirtForkliftInventory,
+        Provider.ProviderType.VSPHERE: VsphereForkliftInventory,
+        Provider.ProviderType.OPENSHIFT: OpenshiftForkliftInventory,
+        Provider.ProviderType.OPENSTACK: OpenstackForliftinventory,
+    })
+
+
+def create_forklift_inventory(
+    client: DynamicClient,
+    mtv_namespace: str,
+    provider: BaseProvider,
+) -> ForkliftInventory:
+    """ForkliftInventory instance for the given provider.
+
+    Args:
+        client (DynamicClient): OpenShift admin client.
+        mtv_namespace (str): MTV operator namespace.
+        provider (BaseProvider): Source provider instance.
+
+    Returns:
+        ForkliftInventory: Inventory instance matching the provider type.
+
+    Raises:
+        ValueError: If ocp_resource is not set on the provider.
+        ValueError: If the provider type is not supported.
+    """
+    if not PROVIDER_INVENTORY_MAP:
+        _register_inventory_classes()
+
+    if provider.ocp_resource is None:
+        raise ValueError(f"{provider.type} provider ocp_resource is not set")
+
+    provider_class = PROVIDER_INVENTORY_MAP.get(provider.type)
+    if provider_class is None:
+        raise ValueError(f"Provider {provider.type} not implemented")
+
+    return provider_class(  # type: ignore[call-arg]  # Subclasses use 'namespace' param while base class uses 'mtv_namespace'
+        client=client,
+        namespace=mtv_namespace,
+        provider_name=provider.ocp_resource.name,
+    )
 
 
 class ForkliftInventory(abc.ABC):

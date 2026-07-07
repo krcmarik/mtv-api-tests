@@ -45,11 +45,7 @@ from utilities.copyoffload_constants import FORKLIFT_CONTROLLER_NAME
 from libs.base_provider import BaseProvider
 from libs.forklift_inventory import (
     ForkliftInventory,
-    OpenshiftForkliftInventory,
-    OpenstackForliftinventory,
-    OvaForkliftInventory,
-    OvirtForkliftInventory,
-    VsphereForkliftInventory,
+    create_forklift_inventory,
 )
 from libs.providers.openshift import OCPProvider
 from libs.providers.vmware import VMWareProvider
@@ -338,6 +334,19 @@ def pytest_collection_modifyitems(session, config, items):
                         or "vsphere" in item.keywords
                     ):
                         item.add_marker(vsphere_only_skip)
+
+            # Skip CA cert tests for providers that don't use CA certificates.
+            ca_cert_unsupported = (
+                Provider.ProviderType.OPENSHIFT,
+                Provider.ProviderType.OVA,
+            )
+            if source_provider_type in ca_cert_unsupported:
+                ca_cert_skip = pytest.mark.skip(
+                    reason=f"{source_provider_type} does not use CA certificates in provider secrets"
+                )
+                for item in items:
+                    if "ca_crt" in item.keywords:
+                        item.add_marker(ca_cert_skip)
 
     _session_store = get_fixture_store(session)
     vms_for_current_session: set = set()
@@ -1493,24 +1502,7 @@ def forklift_pods_state(ocp_admin_client: DynamicClient) -> None:
 def source_provider_inventory(
     ocp_admin_client: DynamicClient, mtv_namespace: str, source_provider: BaseProvider
 ) -> ForkliftInventory:
-    if not source_provider.ocp_resource:
-        raise ValueError("source_provider.ocp_resource is not set")
-
-    providers = {
-        Provider.ProviderType.OVA: OvaForkliftInventory,
-        Provider.ProviderType.RHV: OvirtForkliftInventory,
-        Provider.ProviderType.VSPHERE: VsphereForkliftInventory,
-        Provider.ProviderType.OPENSHIFT: OpenshiftForkliftInventory,
-        Provider.ProviderType.OPENSTACK: OpenstackForliftinventory,
-    }
-    provider_instance = providers.get(source_provider.type)
-
-    if not provider_instance:
-        raise ValueError(f"Provider {source_provider.type} not implemented")
-
-    return provider_instance(  # type: ignore
-        client=ocp_admin_client, namespace=mtv_namespace, provider_name=source_provider.ocp_resource.name
-    )
+    return create_forklift_inventory(client=ocp_admin_client, mtv_namespace=mtv_namespace, provider=source_provider)
 
 
 @pytest.fixture(scope="session")

@@ -272,6 +272,7 @@ The Quick Start runs **tier0** tests (smoke tests). You can run other test categ
 | `copyoffload_sanity` | Copy-offload sanity subset (see below) | Quick copy-offload validation |
 | `warm` | Warm migrations (VMs stay running) | Specific scenario testing |
 | `shared_disk` | Shared disk migration tests | Testing shared disk between VMs |
+| `ca_crt` | CA certificate field (ca.crt) in provider secrets | Testing ca.crt secret field support |
 | `vsphere` | VMware vSphere provider-specific tests | Tests specific to vSphere provider |
 | `upgrade` | Migration across MTV operator upgrades | Validating upgrade compatibility |
 

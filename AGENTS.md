@@ -784,6 +784,9 @@ class TestNameHere:
 - **Class-level parametrization**: Use `class_plan_config` with `indirect=True`
 - **Shared state**: Store resources on class with `self.__class__.attribute`
 - **Test ordering**: Use `@pytest.mark.incremental` at class level for sequential test dependencies
+- **4-step plan-readiness pattern**: verify_\<feature\> -> storagemap -> networkmap -> plan
+  Used when the feature under test is exercised during provider/plan creation (e.g., CA cert field
+  validation). No migration is executed — plan readiness proves the feature works.
 - **5-step pattern**: storagemap -> networkmap -> plan -> migrate -> check_vms
 - **6-step shared-disk pattern (Linux)**: storagemap -> networkmap -> plan -> migrate -> verify_shared_disk_data -> check_vms
   Shared disk tests insert `test_verify_shared_disk_data` before `test_check_vms`. This step mounts,
@@ -988,6 +991,7 @@ Class-scoped teardown fixture that cleans up migrated VMs after each test class 
 | `copyoffload`           | Copy-offload (XCOPY) tests             |
 | `copyoffload_sanity`    | Copy-offload sanity subset             |
 | `copyoffload_snapshots` | Copy-offload snapshot tests (vSphere)  |
+| `ca_crt`                | CA certificate field (ca.crt) tests    |
 | `vsphere`               | VMware vSphere provider-specific tests |
 | `shared_disk`           | Shared disk migration tests            |
 
@@ -997,6 +1001,7 @@ Provider-type skip logic runs in `pytest_collection_modifyitems` (in `conftest.p
 
 - Warm migration tests → `@pytest.mark.warm`
 - Copy-offload snapshot tests → `@pytest.mark.copyoffload_snapshots`
+- CA certificate field tests → `@pytest.mark.ca_crt`
 
 See the documented hook in `conftest.py` for how to add new provider-type skip rules.
 

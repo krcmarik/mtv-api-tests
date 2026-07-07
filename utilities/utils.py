@@ -160,21 +160,23 @@ def _fetch_and_store_cacert(
     secret_string_data: dict[str, Any],
     tmp_dir: pytest.TempPathFactory | None,
     session_uuid: str,
+    ca_cert_key: str = "cacert",
 ) -> Path:
-    """
-    Fetch CA certificate from provider and store in secret data.
+    """Fetch CA certificate from provider and store in secret data.
 
     Args:
-        source_provider_data: Provider configuration with 'type' and 'fqdn'
-        secret_string_data: Secret data dict to add 'cacert' to
-        tmp_dir: Temp directory factory for cert file
-        session_uuid: Session UUID for unique filename
+        source_provider_data (dict[str, Any]): Provider configuration with 'type' and 'fqdn'.
+        secret_string_data (dict[str, Any]): Secret data dict to store the certificate in.
+        tmp_dir (pytest.TempPathFactory | None): Temp directory factory for cert file.
+        session_uuid (str): Session UUID for unique filename.
+        ca_cert_key (str): Secret field name for the CA certificate. Defaults to "cacert".
+            Use "ca.crt" for the standard Kubernetes convention (MTV-4561).
 
     Returns:
-        Path to the certificate file
+        Path: Path to the certificate file.
 
     Raises:
-        ValueError: If tmp_dir is not provided
+        ValueError: If tmp_dir is not provided.
     """
     source_provider_type = source_provider_data["type"]
     if not tmp_dir:
@@ -184,7 +186,7 @@ def _fetch_and_store_cacert(
         provider_fqdn=source_provider_data["fqdn"],
         cert_file=tmp_dir.mktemp(source_provider_type.upper()) / f"{source_provider_type}_{session_uuid}_cert.crt",
     )
-    secret_string_data["cacert"] = cert_file.read_text()
+    secret_string_data[ca_cert_key] = cert_file.read_text()
     return cert_file
 
 
@@ -273,7 +275,30 @@ def create_source_provider(
     destination_ocp_secret: Secret,
     insecure: bool,
     tmp_dir: pytest.TempPathFactory | None = None,
+    ca_cert_key: str = "cacert",
 ) -> Generator[BaseProvider, None, None]:
+    """Source provider configured and registered as a Forklift Provider CR.
+
+    Args:
+        source_provider_data (dict[str, Any]): Provider configuration from providers JSON.
+        namespace (str): Target namespace for the provider resources.
+        admin_client (DynamicClient): OpenShift client for resource creation.
+        session_uuid (str): Unique session identifier for resource naming.
+        fixture_store (dict[str, Any]): Session fixture store for resource tracking and teardown.
+        ocp_admin_client (DynamicClient): OpenShift admin client for cluster operations.
+        destination_ocp_secret (Secret): Secret for the destination OCP provider.
+        insecure (bool): Whether to skip TLS certificate verification.
+        tmp_dir (pytest.TempPathFactory | None): Temporary directory factory for storing fetched certificates.
+        ca_cert_key (str): Secret data key for the CA certificate (default: "cacert",
+            use "ca.crt" to test the alternative secret field name).
+
+    Yields:
+        BaseProvider: Connected source provider instance.
+
+    Raises:
+        ValueError: If the provider type cannot be determined from source_provider_data.
+        ValueError: If the provider secret fails to create.
+    """
     # common
     source_provider_secret: Secret | None = None
     source_provider: Any = None
@@ -320,7 +345,7 @@ def create_source_provider(
                 LOGGER.info(f"Normalized VMware API URL for TLS: '{original_url}' -> '{normalized_url}'")
             source_provider_data_copy["api_url"] = normalized_url
             secret_string_data["url"] = normalized_url
-            _fetch_and_store_cacert(source_provider_data_copy, secret_string_data, tmp_dir, session_uuid)
+            _fetch_and_store_cacert(source_provider_data_copy, secret_string_data, tmp_dir, session_uuid, ca_cert_key)
 
     elif rhv_provider(provider_data=source_provider_data_copy):
         source_provider = OvirtProvider
@@ -330,7 +355,9 @@ def create_source_provider(
 
         # Always fetch CA certificate for RHV provider, even when insecure=True
         # The certificate is required for imageio connection, insecureSkipVerify controls validation
-        cert_file = _fetch_and_store_cacert(source_provider_data_copy, secret_string_data, tmp_dir, session_uuid)
+        cert_file = _fetch_and_store_cacert(
+            source_provider_data_copy, secret_string_data, tmp_dir, session_uuid, ca_cert_key
+        )
 
         # Set ca_file in provider_args only when secure mode (for SDK connection)
         if not insecure:
@@ -355,7 +382,7 @@ def create_source_provider(
 
         # Add CA certificate for SSL verification
         if not insecure:
-            _fetch_and_store_cacert(source_provider_data_copy, secret_string_data, tmp_dir, session_uuid)
+            _fetch_and_store_cacert(source_provider_data_copy, secret_string_data, tmp_dir, session_uuid, ca_cert_key)
 
     elif ova_provider(provider_data=source_provider_data_copy):
         source_provider = OVAProvider
