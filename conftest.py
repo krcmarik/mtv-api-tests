@@ -331,7 +331,6 @@ def pytest_collection_modifyitems(session, config, items):
                         "copyoffload" in item.keywords
                         or "shared_disk" in item.keywords
                         or "deep_inspection" in item.keywords
-                        or "vsphere" in item.keywords
                     ):
                         item.add_marker(vsphere_only_skip)
 
