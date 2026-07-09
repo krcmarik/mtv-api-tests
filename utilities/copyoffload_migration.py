@@ -56,7 +56,7 @@ _POPULATE_POD_NAME_PREFIX = "populate-"
 
 
 def apply_copyoffload_vm_name_override(
-    virtual_machines: list[dict[str, Any]],
+    virtual_machines: list[dict[str, str | bool]],
     source_provider: BaseProvider,
 ) -> None:
     """Override placeholder VM names with the real VM name from copy-offload config.
@@ -65,7 +65,7 @@ def apply_copyoffload_vm_name_override(
     must be resolved to the real template name from the provider's copyoffload_config.
 
     Args:
-        virtual_machines (list[dict[str, Any]]): List of VM config dicts to update in place.
+        virtual_machines (list[dict[str, str | bool]]): List of VM config dicts to update in place.
         source_provider (BaseProvider): Source provider that may have copyoffload_config.
     """
     if not isinstance(source_provider, VMWareProvider) or not source_provider.copyoffload_config:
