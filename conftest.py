@@ -7,7 +7,7 @@ import pickle
 import shutil
 import tempfile
 import uuid
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from copy import deepcopy
 from pathlib import Path
 from shutil import rmtree
@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING, Any
 
 import filelock
 import pytest
+import requests
 from kubernetes.dynamic.exceptions import ForbiddenError, NotFoundError
+from pytest_jira import CONNECTION_ERROR_FLAG_NAME, STRICT
 
 if TYPE_CHECKING:
     from kubernetes.dynamic import DynamicClient
@@ -43,10 +45,7 @@ from exceptions.exceptions import (
 )
 from utilities.copyoffload_constants import FORKLIFT_CONTROLLER_NAME
 from libs.base_provider import BaseProvider
-from libs.forklift_inventory import (
-    ForkliftInventory,
-    create_forklift_inventory,
-)
+from libs.forklift_inventory import ForkliftInventory, create_forklift_inventory
 from libs.providers.openshift import OCPProvider
 from libs.providers.vmware import VMWareProvider
 from utilities.constants import MTV_OPERATOR_NAME
@@ -54,6 +53,7 @@ from utilities.hooks import create_hook_if_configured
 from utilities.logger import separator, setup_logging
 from utilities.mtv_migration import get_vm_suffix
 from utilities.must_gather import run_must_gather
+from utilities.provider_inventory import wait_for_cloned_vms_in_forklift_inventory
 from utilities.naming import (
     generate_name_with_uuid,
     resolve_destination_vm_name,
@@ -982,6 +982,41 @@ def class_plan_config(request: pytest.FixtureRequest) -> dict[str, Any]:
     return request.param
 
 
+@pytest.fixture(scope="session")
+def jira_issue(request: pytest.FixtureRequest) -> Callable[[str], bool | None]:
+    """Session-scoped override of pytest-jira's jira_issue fixture.
+
+    pytest-jira's built-in jira_issue is function-scoped and cannot be used
+    in class-scoped fixtures like prepared_plan. This session-scoped override
+    exposes the same callable interface without the scope mismatch.
+
+    TODO: Remove this override once https://github.com/rhevm-qe-automation/pytest_jira/pull/175
+    is merged — use jira_issue_scope_session from pytest-jira directly instead.
+
+    Returns:
+        Callable[[str], bool | None]: True if open, False if resolved, None if unavailable.
+    """
+    jira_plugin = request.config.pluginmanager.getplugin("jira_plugin")
+
+    def _check_issue(issue_id: str) -> bool | None:
+        if jira_plugin:
+            try:
+                return not jira_plugin.is_issue_resolved(issue_id)
+            except requests.RequestException as e:
+                strategy = request.config.getoption(CONNECTION_ERROR_FLAG_NAME)
+                if strategy == STRICT:
+                    raise
+                LOGGER.warning(
+                    f"Jira connection failed for issue '{issue_id}' "
+                    f"(strategy={strategy!r}); treating as unavailable: {e}"
+                )
+        else:
+            LOGGER.warning(f"Jira plugin not configured; treating issue '{issue_id}' as unavailable")
+        return None
+
+    return _check_issue
+
+
 @pytest.fixture(scope="class")
 def prepared_plan(
     request: pytest.FixtureRequest,
@@ -994,12 +1029,20 @@ def prepared_plan(
     source_provider_inventory: ForkliftInventory,
     target_namespace: str,
     vcenter_clone_provider: VMWareProvider | None,
+    jira_issue: Callable[[str], bool | None],
 ) -> Generator[dict[str, Any], None, None]:
     """Prepare plan with cloned VMs for class-based tests.
 
     This fixture handles VM cloning and name updates, similar to the
     function-scoped `plan` fixture but at class scope. It prepares VMs
     once per test class rather than once per test function.
+
+    Cloning uses a two-phase pattern: all VMs are cloned first, then Forklift
+    inventory sync is waited on for every cloned VM. vSphere inventory sync
+    workarounds (MTV-6066) are gated by MTV-6072 via jira_issue: active
+    while the issue is open or Jira is unavailable, skipped when resolved.
+    This avoids inventory sync failures when cloning VM2+ while VM1 inventory
+    sync is still pending.
 
     Args:
         request (pytest.FixtureRequest): Pytest fixture request
@@ -1012,6 +1055,7 @@ def prepared_plan(
         source_provider_inventory (ForkliftInventory): Source provider inventory
         target_namespace (str): Default target namespace for VMs
         vcenter_clone_provider (VMWareProvider | None): vCenter provider for cloning, or None
+        jira_issue (Callable[[str], bool | None]): Session-scoped jira_issue override
 
     Yields:
         dict[str, Any]: Prepared plan with updated VM names
@@ -1103,6 +1147,7 @@ def prepared_plan(
 
         original_source_vm_names: list[str] = [vm["name"] for vm in virtual_machines] if has_shared_disk_config else []
         cloned_vm_objects: list[Any] = []
+        cloned_vm_names: list[str] = []
 
         for vm in virtual_machines:
             clone_options = {**vm, "enable_ctk": warm_migration}
@@ -1139,12 +1184,7 @@ def prepared_plan(
                 clone_options=vm,
             )
             vm["name"] = source_vm_details["name"]
-
-            # Wait for cloned VM to appear in Forklift inventory before proceeding
-            # This is needed for external providers that Forklift needs to sync from
-            # OVA is excluded because it doesn't clone VMs (uses pre-existing files)
-            if source_provider.type != Provider.ProviderType.OVA:
-                source_provider_inventory.wait_for_vm(name=vm["name"], timeout=300)
+            cloned_vm_names.append(vm["name"])
 
             provider_vm_api = source_vm_details["provider_vm_api"]
 
@@ -1182,6 +1222,19 @@ def prepared_plan(
                         source_provider_data=fixture_store["source_provider_data"],
                         vm_details=source_vm_details,
                     )
+
+        # Phase 2: wait for all cloned VMs in Forklift inventory after every clone completes.
+        # Sequential per-VM wait during cloning causes inventory sync failures on VM2+.
+        inventory_timeout = plan.get("inventory_timeout", 300)
+        wait_for_cloned_vms_in_forklift_inventory(
+            source_provider=source_provider,
+            source_provider_inventory=source_provider_inventory,
+            cloned_vm_names=cloned_vm_names,
+            virtual_machines=virtual_machines,
+            copyoffload_config=fixture_store["source_provider_data"].get("copyoffload", {}),
+            inventory_timeout=inventory_timeout,
+            jira_issue_open=jira_issue,
+        )
 
         # Relink shared disks between clones (VMware-specific)
         # When VMs with shared disks are cloned, each clone gets independent disk copies,
